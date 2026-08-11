@@ -6,7 +6,7 @@ import {
 } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import type { ToolUIPart } from 'ai';
-import { useContext, useState, type ComponentProps, type ReactNode } from 'react';
+import { useContext, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import { CodeBlock } from './code-block';
 import { createContext } from 'react';
 import { ChevronUpIcon, ShieldCheckIcon, ShieldOffIcon as ShieldXIcon, XCircleIcon, CircleOutlineIcon as CircleIcon, ClockIcon, ChevronDownIcon, WrenchIcon, CheckCircleIcon } from '../icons';
@@ -83,6 +83,14 @@ const ToolContext = createContext<{
 
 export const ToolContainer = ({ className, ...props }: ToolContainerProps) => {
   const [open, setOpen] = useState(props.defaultOpen || false);
+
+  // A tool can become an approval request after it has already mounted, and the
+  // Allow/Deny buttons sit inside this panel. Opening on that change keeps them
+  // reachable. This never closes the panel, so a reader's own choice sticks.
+  useEffect(() => {
+    if (props.defaultOpen) setOpen(true);
+  }, [props.defaultOpen]);
+
   return (
     <ToolContext.Provider value={{ open }}>
       <Collapsible

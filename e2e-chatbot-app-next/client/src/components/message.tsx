@@ -45,6 +45,8 @@ import { Streamdown } from 'streamdown';
 import { useApproval } from '@/hooks/use-approval';
 import { GenieResultCard } from './genie-chart';
 import { parseGenieResults, type GenieResultSet } from '@/lib/genie-result';
+import { parseGenieToolName, toolDisplayName } from '@/lib/tool-labels';
+import { useGenieSpaceTitle } from '@/hooks/use-genie-space-title';
 
 const PurePreviewMessage = ({
   message,
@@ -420,6 +422,11 @@ const ToolPartRenderer = ({
 }) => {
   const { toolCallId, input, state, errorText, output, toolName } = part;
 
+  // Genie names its tools after the space id, which says nothing to a reader,
+  // so the space's own title stands in for it where one can be resolved.
+  const genieSpaceId = parseGenieToolName(toolName)?.spaceId;
+  const displayName = toolDisplayName(toolName, useGenieSpaceTitle(genieSpaceId));
+
   const isMcpApproval =
     part.callProviderMetadata?.databricks?.approvalRequestId != null;
   const mcpServerName =
@@ -436,11 +443,13 @@ const ToolPartRenderer = ({
   })();
 
   if (isMcpApproval) {
+    // Approval actions live inside the collapsible, so a pending request has to
+    // start open or there is no way to allow or deny it.
     return (
-      <McpTool defaultOpen={true}>
+      <McpTool defaultOpen={state === 'approval-requested'}>
         <McpToolHeader
           serverName={mcpServerName}
-          toolName={toolName}
+          toolName={displayName}
           state={effectiveState}
           approved={approved}
         />
@@ -483,9 +492,11 @@ const ToolPartRenderer = ({
     );
   }
 
+  // Collapsed by default: the header still shows the tool and its status,
+  // without putting raw request and response payloads in the transcript.
   return (
-    <Tool defaultOpen={true}>
-      <ToolHeader type={toolName} state={effectiveState} />
+    <Tool defaultOpen={false}>
+      <ToolHeader type={displayName} state={effectiveState} />
       <ToolContent>
         <ToolInput input={input} />
         {state === 'output-available' && (

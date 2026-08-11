@@ -48,6 +48,23 @@ MCP_SERVERS = [
 
 REASONING_EFFORT = "medium"  # one of: none, low, medium, high
 
+# The chat UI already charts Genie query results from the rows Genie returned,
+# tooltips and all (see e2e-chatbot-app-next/client/src/components/genie-chart.tsx).
+# Left to itself the model also draws a mermaid xychart of the same figures, so the
+# reader gets the same answer twice, and the redrawn copy is the one that can be
+# wrong. Data from other tools has nothing rendering it, so charts stay allowed there.
+GENIE_VISUALIZATION_INSTRUCTIONS = """\
+Results from a Genie space are charted automatically in the interface, directly from the \
+rows Genie returned. Never redraw them — do not emit a mermaid block (xychart-beta, pie, or \
+otherwise), an ASCII chart, or a markdown table repeating those rows. Describe what the \
+data shows in prose instead, and refer to the chart as something the user can already see.
+
+This applies only to Genie results. You may still use mermaid for diagrams that illustrate \
+a process or relationship, and for charting figures gathered from other tools such as web \
+search."""
+
+INSTRUCTIONS = f"{SYSTEM_PROMPT}\n\n{GENIE_VISUALIZATION_INSTRUCTIONS}"
+
 
 def get_mcp_user_workspace_client():
     return get_user_workspace_client()
@@ -67,7 +84,7 @@ def init_mcp_servers():
 def create_agent(mcp_servers: List[MCPServer]) -> Agent:
     return Agent(
         name=NAME,
-        instructions=SYSTEM_PROMPT,
+        instructions=INSTRUCTIONS,
         model=MODEL,
         mcp_servers=mcp_servers,
         tools=[WebSearchTool()],
