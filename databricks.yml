@@ -1,12 +1,27 @@
 bundle:
-  name: agent_openai_agents_sdk
+  name: responses-agent-chat-app
+
+# The chat UI is vendored under e2e-chatbot-app-next/ and rebuilt in the app
+# container by `start-app`, so its installed and compiled output stays local.
+sync:
+  exclude:
+    - "**/node_modules"
+    - "**/dist"
+    - "**/.venv"
+    - "**/test-results"
+    - "**/__pycache__"
 
 resources:
   apps:
-    agent_openai_agents_sdk:
-      name: "agent-openai-agents-sdk"
-      description: "OpenAI Agents SDK agent application"
+    responses_agent_chat_app:
+      name: "responses-agent-chat-app"
+      description: "Responses agent with web search and Genie, with a chat UI"
       source_code_path: ./
+
+      # The agent calls the Genie MCP server with the signed-in user's token
+      # (see get_user_workspace_client), which needs this scope to be forwarded.
+      user_api_scopes:
+        - "mcp.genie"
       config:
         command: ["uv", "run", "start-app"]
         env:
@@ -27,8 +42,15 @@ resources:
       resources:
         - name: 'experiment'
           experiment:
-            experiment_id: ""
+            experiment_id: "1386037587619529"
             permission: 'CAN_MANAGE'
+
+        # Both names are capped at 30 characters by the Apps API.
+        - name: 'genie-campus-card-swipe'
+          genie_space:
+            name: 'Campus Card Swipe Analytics'
+            space_id: '01f169d6d34a1233bb6d5ab580b58495'
+            permission: 'CAN_RUN'
 
 targets:
   dev:
@@ -43,5 +65,5 @@ targets:
     #   host: https://...
     resources:
       apps:
-        agent_openai_agents_sdk:
-          name: agent-openai-agents-sdk
+        responses_agent_chat_app:
+          name: responses-agent-chat-app

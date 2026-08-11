@@ -139,6 +139,9 @@ After installation, the skills will be available as slash commands (e.g., `/agen
 
 | File | Purpose |
 |------|---------|
+| `e2e-chatbot-app-next/` | Chat UI, vendored from `databricks/app-templates` and **locally customized** — do not delete or re-clone it |
+| `.../client/src/lib/genie-result.ts` | Parses Genie MCP query results (schema + rows) out of tool output |
+| `.../client/src/components/genie-chart.tsx` | Renders those Genie results as charts and tables |
 | `agent_server/agent.py` | Agent logic, model, instructions, MCP servers |
 | `agent_server/start_server.py` | FastAPI server + MLflow setup |
 | `agent_server/evaluate_agent.py` | Agent evaluation with MLflow scorers |
