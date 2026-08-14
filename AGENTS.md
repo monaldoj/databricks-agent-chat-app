@@ -159,6 +159,8 @@ After installation, the skills will be available as slash commands (e.g., `/agen
 | Task | Command |
 |------|---------|
 | Set up UC-backed experiment | `uv run setup-mlflow-experiment --profile <p> --experiment-name <name> --catalog <catalog> --schema <schema>` |
+| Pin the agent's model | add `--agent-model system.ai.claude-opus-5` to the setup command |
+| Deploy on a different model once | `BUNDLE_VAR_agent_model=system.ai.claude-opus-5 databricks bundle deploy` |
 | Discover tools | `uv run discover-tools` |
 | Run locally | `uv run start-app` |
 | Deploy and start | `databricks bundle deploy` |
@@ -175,17 +177,77 @@ deploys the app and Lakebase Autoscaling project:
 | Setting | Effect |
 |---------|--------|
 | `MLFLOW_EXPERIMENT_ID` | Local experiment id written by `setup-mlflow-experiment`; DAB receives the same id from its target override. |
+| `AGENT_MODEL` | Optional three-level model name (`system.ai.claude-opus-5`) for local runs, written by `setup-mlflow-experiment --agent-model`. Deployments receive `BUNDLE_VAR_agent_model` instead. Unset, the agent runs the model named in `agent_server/agent.py`. See "Model selection" below. |
 | `GENIE_SPACE_IDS` | Optional local comma-separated Genie ids. Deployments receive `BUNDLE_VAR_genie_space_ids`; each signed-in user must have access. |
 | `MLFLOW_TRACING_SQL_WAREHOUSE_ID` | Warehouse selected by experiment setup for creating and querying UC trace tables. |
 | `MLFLOW_TRACE_LOCATION` | `catalog.schema.table_prefix` written for local development. |
 | `LAKEBASE_PROJECT_ID` | Local only: `start-app` resolves the project's `production/primary` endpoint through the CLI and runs in Persistent mode. Unset, or unresolvable, means Ephemeral mode (in-memory history). The deployed app gets its connection from the bound `postgres` resource instead. |
 | `BUNDLE_VAR_app_name` | Overrides the app name pinned by setup (`--app-name`, default `agent-web-search-genie-<target>`) for one deploy. |
+| `BUNDLE_VAR_agent_model` | Overrides the model pinned by setup (`--agent-model`) for one deploy. |
 | `BUNDLE_VAR_genie_space_ids` | Optional comma-separated Genie ids for the deployed app. Pin them in `variable-overrides.json` to keep them across deploys. |
 | `BUNDLE_VAR_lakebase_project_id` | Overrides the Lakebase project pinned by setup for one deploy. Unset and unpinned, the deploy uses `<app-name>-lakebase` and creates it if missing. |
 
 The setup script creates the four UC OTEL trace tables. DAB declares each table
 as an app resource with `MODIFY` (which includes `SELECT`), so no post-deploy
 grant script is needed.
+
+---
+
+## Model selection
+
+Every model runs through the AI Gateway's OpenAI-compatible API
+(`<host>/ai-gateway/openai/v1`), so one client serves every provider and models are named
+by their three-level Unity Catalog name — `system.ai.claude-opus-5`,
+`system.ai.gemini-3-5-flash`, `system.ai.gpt-5-6-sol`. Serving endpoint names
+(`databricks-claude-opus-5`) reach the same models. A name the workspace does not serve
+fails with `NOT_FOUND` or `ENDPOINT_NOT_FOUND`; `system.ai` lists what is registered,
+which is not always what is deployed.
+
+**Choose the model through configuration, not by editing `agent_server/agent.py`.** The
+model is a bundle variable, so a redeploy can change it:
+
+```bash
+# One deploy on a different model.
+BUNDLE_VAR_agent_model=system.ai.claude-opus-5 \
+  databricks bundle deploy --target dev --profile <profile>
+
+# Or pin it for every later deploy, and for local runs via .env.
+uv run setup-mlflow-experiment --profile <profile> --agent-model system.ai.claude-opus-5 \
+  --experiment-name <path> --catalog <catalog> --schema <schema>
+```
+
+Unpinned, the variable's whitespace default means no override and the app runs the model
+named in `agent_server/agent.py`. So a deploy that omits `BUNDLE_VAR_agent_model` returns
+a previously overridden app to that default — pin the model with `--agent-model` if it
+should survive redeploys. `databricks apps get <app-name>` shows the `AGENT_MODEL` the
+app is running with.
+
+**The gateway is OpenAI-compatible, not uniform**, and swapping a model without
+accounting for that is what breaks. `model_profile()` in `agent_server/agent.py` holds the
+differences, all verified against the gateway:
+
+| | GPT | Claude | Gemini | Llama, Kimi, GLM, GPT-OSS |
+|---|---|---|---|---|
+| API | Responses | chat completions | chat completions | chat completions |
+| Reasoning | `reasoning.effort` (no `minimal`) | `thinking.type: adaptive` + `output_config.effort` (no `none`; `xhigh`/`max` also valid) | `reasoning_effort` (no `none`) | none assumed |
+| Hosted web search | yes | no | no | no |
+
+Only GPT models accept the Responses API — everything else answers `/responses` with
+"Responses API passthrough is not supported for model ...". Hosted tools such as web
+search exist only there, so on any other model the agent runs with its MCP tools alone
+and is told it has no web search. Reasoning effort is validated at import: a value the
+selected family rejects raises rather than failing on the first request.
+
+Two Gemini quirks are absorbed by `GatewayOpenAI` and `GatewayChatCompletionsModel` in
+`agent_server/utils.py`, so nothing else has to know about them. Google returns `content`
+as a list of typed parts where chat completions specifies a string, and it rejects any
+turn whose function calls come back without the `thoughtSignature` it issued — which the
+agents SDK carries under a different name than the gateway reads. Tool results are
+collapsed to a single string for the same reason.
+
+MLflow autologging sees Gemini responses before that normalization, so it logs pydantic
+serializer warnings and cannot aggregate streamed chunks (the gateway sends `id: null`).
+Traces are still recorded; the warnings are noise.
 
 ---
 

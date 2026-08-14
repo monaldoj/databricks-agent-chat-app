@@ -36,6 +36,15 @@ variables:
   sql_warehouse_id:
     description: SQL warehouse used to create and query the UC trace tables.
 
+  agent_model:
+    description: |
+      Optional three-level Unity Catalog model name for the deployed agent, such as
+      system.ai.claude-opus-5. `uv run setup-mlflow-experiment --agent-model <name>`
+      pins it across deploys; BUNDLE_VAR_agent_model overrides a single deploy. The
+      whitespace default is normalized to no override — the agent then runs the model
+      named in agent_server/agent.py — while remaining valid for the Apps API.
+    default: " "
+
   genie_space_ids:
     description: |
       Optional comma-separated Genie space ids. The agent accesses them on behalf
@@ -70,7 +79,7 @@ resources:
       pg_version: ${var.lakebase_pg_version}
       history_retention_duration: "604800s"
       lifecycle:
-        prevent_destroy: true
+        prevent_destroy: false
 
   apps:
     responses_agent_chat_app:
@@ -106,6 +115,8 @@ resources:
             value: ${var.sql_warehouse_id}
           - name: GENIE_SPACE_IDS
             value: ${var.genie_space_ids}
+          - name: AGENT_MODEL
+            value: ${var.agent_model}
 
       resources:
         # The setup script creates this UC-backed experiment. DAB binds it to the app

@@ -453,6 +453,14 @@ def main() -> None:
         default="",
         help="Optional comma-separated Genie space ids to pin for deployments.",
     )
+    parser.add_argument(
+        "--agent-model",
+        default="",
+        help=(
+            "Optional three-level model name to pin for deployments, such as "
+            "system.ai.claude-opus-5; defaults to the model named in agent_server/agent.py."
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -482,9 +490,9 @@ def main() -> None:
         app_name = args.app_name or f"agent-web-search-genie-{args.target}"
         project_id = resolve_lakebase_project(workspace, args.target, app_name)
 
-        genie_space_ids = args.genie_space_ids or read_bundle_overrides(args.target).get(
-            "genie_space_ids", ""
-        )
+        pinned = read_bundle_overrides(args.target)
+        genie_space_ids = args.genie_space_ids or pinned.get("genie_space_ids", "")
+        agent_model = args.agent_model or pinned.get("agent_model", "")
         overrides = {
             "app_name": app_name,
             "experiment_id": experiment_id,
@@ -496,6 +504,8 @@ def main() -> None:
         }
         if genie_space_ids:
             overrides["genie_space_ids"] = genie_space_ids
+        if agent_model:
+            overrides["agent_model"] = agent_model
         override_path = write_bundle_overrides(args.target, overrides)
         prune_retired_state(args.target, args.profile)
         reconcile_app_binding(workspace, args.target, args.profile, app_name)
@@ -515,6 +525,8 @@ def main() -> None:
         }
         if genie_space_ids:
             local_values["GENIE_SPACE_IDS"] = genie_space_ids
+        if agent_model:
+            local_values["AGENT_MODEL"] = agent_model
         update_env_file(local_values)
     except Exception as error:
         print(f"Experiment setup failed: {error}", file=sys.stderr)
@@ -522,6 +534,7 @@ def main() -> None:
 
     print(f"Workspace: {workspace.config.host} (profile '{args.profile}')")
     print(f"App: {app_name}")
+    print(f"Agent model: {agent_model or 'default in agent_server/agent.py'}")
     print(f"Experiment: {args.experiment_name} ({experiment_id})")
     print(f"Trace tables: {trace_location}_otel_*")
     print(f"Lakebase project: {project_id}")
