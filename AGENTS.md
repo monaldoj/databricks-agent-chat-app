@@ -10,16 +10,30 @@
    *Note: New apps should use the `agent-*` prefix (e.g., `agent-data-analyst`) unless the user specifies otherwise.*
 
 2. **If the user mentions memory, conversation history, or persistence:**
-   > "For memory capabilities, do you have an existing Lakebase instance? If so, what's the instance name?"
+ > "For memory capabilities, do you have an existing Lakebase instance? If so, what's the instance name?"
 
-**Then set up the environment using quickstart:**
+3. **If deploying to a workspace this checkout has not been set up for:**
+ > "What experiment name, Unity Catalog catalog, and schema should hold MLflow traces?"
+ > "Which Genie space ids should the agent attach as tools?"
 
-1. **Read the quickstart skill** at `.claude/skills/quickstart/SKILL.md` — it contains all available CLI flags, what the script configures, and fallback instructions.
-2. **Check if `.env` exists.** If it does, the environment is already configured — read it to find `DATABRICKS_CONFIG_PROFILE` and skip to verifying auth. If `.env` does not exist, run quickstart:
+ *Both are configuration, not code — see "Workspace-specific configuration" below.*
+
+**Then set up the experiment and environment:**
+
+1. Run `databricks auth profiles` and choose a valid profile.
+2. Create or reuse the UC-backed experiment:
    ```bash
-   uv run quickstart --profile <profile-name>
+   uv run setup-mlflow-experiment \
+     --profile <profile-name> \
+     --experiment-name <workspace-experiment-path> \
+     --catalog <catalog> \
+     --schema <schema>
    ```
-3. Run `databricks auth profiles` to verify the profile is configured and valid.
+   This writes `.env` for local runs and target-specific DAB overrides under
+   `.databricks/bundle/<target>/`. It also parks deployment state that belongs to
+   another workspace as `.databricks/bundle/<target>@<host>/`, restoring it if that
+   workspace is targeted again. **Always re-run it when switching a target to a
+   different workspace** — see "Switching workspaces" below.
 
 **CRITICAL: All `databricks` CLI commands must include the profile from `.env`.** Either use `--profile` or set the env var:
 
@@ -53,6 +67,24 @@ Ask the user: "I see there's an existing app with the same name. Would you like 
 
 - **If they want to bind**: See the **deploy** skill for binding steps
 - **If they want to delete**: Run `databricks apps delete <app-name>` then deploy again
+
+**If `databricks bundle deploy` panics with a nil pointer dereference in
+`dresources.(*ResourceApp).OverrideChangeDesc`:**
+
+The target's deployment state names an app the workspace does not have, and CLI
+v1.10.0 crashes instead of reporting it. This happens when a target is pointed at a
+new workspace, or when the app was deleted outside the bundle. Run
+`uv run setup-mlflow-experiment --profile <profile> ...` for the workspace being
+deployed to — it swaps the target's state — then deploy again.
+
+### Switching workspaces
+
+DAB keys deployment state by target name alone, so one target cannot track two
+workspaces at once. The setup script parks the outgoing workspace's state as
+`.databricks/bundle/<target>@<host>/` and restores it on return. Never delete
+`.databricks/bundle/<target>/` to work around a workspace switch: that orphans the
+app and Lakebase project already deployed in the other workspace, which then have
+to be re-adopted with `databricks bundle deployment bind`.
 
 ## Supervisor API (Offloading the Agent Loop)
 
@@ -108,7 +140,6 @@ After installation, the skills will be available as slash commands (e.g., `/agen
 
 | Task | Skill | Path |
 |------|-------|------|
-| Setup, auth, first-time | **quickstart** | `.claude/skills/quickstart/SKILL.md` |
 | Find tools/resources | **discover-tools** | `.claude/skills/discover-tools/SKILL.md` |
 | Create tool resources | **create-tools** | `.claude/skills/create-tools/SKILL.md` |
 | Deploy to Databricks | **deploy** | `.claude/skills/deploy/SKILL.md` |
@@ -127,11 +158,99 @@ After installation, the skills will be available as slash commands (e.g., `/agen
 
 | Task | Command |
 |------|---------|
-| Setup | `uv run quickstart` |
+| Set up UC-backed experiment | `uv run setup-mlflow-experiment --profile <p> --experiment-name <name> --catalog <catalog> --schema <schema>` |
 | Discover tools | `uv run discover-tools` |
 | Run locally | `uv run start-app` |
-| Deploy | `databricks bundle deploy && databricks bundle run agent_openai_agents_sdk` |
+| Deploy and start | `databricks bundle deploy` |
 | View logs | `databricks apps logs <app-name> --follow` |
+
+---
+
+## Workspace-specific configuration
+
+The agent has no workspace ids in its code. `setup-mlflow-experiment` writes
+local-development settings to `.env` and target-specific DAB overrides. DAB
+deploys the app and Lakebase Autoscaling project:
+
+| Setting | Effect |
+|---------|--------|
+| `MLFLOW_EXPERIMENT_ID` | Local experiment id written by `setup-mlflow-experiment`; DAB receives the same id from its target override. |
+| `GENIE_SPACE_IDS` | Optional local comma-separated Genie ids. Deployments receive `BUNDLE_VAR_genie_space_ids`; each signed-in user must have access. |
+| `MLFLOW_TRACING_SQL_WAREHOUSE_ID` | Warehouse selected by experiment setup for creating and querying UC trace tables. |
+| `MLFLOW_TRACE_LOCATION` | `catalog.schema.table_prefix` written for local development. |
+| `LAKEBASE_PROJECT_ID` | Local only: `start-app` resolves the project's `production/primary` endpoint through the CLI and runs in Persistent mode. Unset, or unresolvable, means Ephemeral mode (in-memory history). The deployed app gets its connection from the bound `postgres` resource instead. |
+| `BUNDLE_VAR_app_name` | Overrides the app name pinned by setup (`--app-name`, default `agent-web-search-genie-<target>`) for one deploy. |
+| `BUNDLE_VAR_genie_space_ids` | Optional comma-separated Genie ids for the deployed app. Pin them in `variable-overrides.json` to keep them across deploys. |
+| `BUNDLE_VAR_lakebase_project_id` | Overrides the Lakebase project pinned by setup for one deploy. Unset and unpinned, the deploy uses `<app-name>-lakebase` and creates it if missing. |
+
+The setup script creates the four UC OTEL trace tables. DAB declares each table
+as an app resource with `MODIFY` (which includes `SELECT`), so no post-deploy
+grant script is needed.
+
+---
+
+## Persistent Agent Memory (Lakebase)
+
+`databricks.yml` declares a Lakebase Autoscaling project and stops there. The
+project creates its production branch and primary endpoint implicitly, and the app's
+`postgres` resource points at that branch's `databricks_postgres` database by path,
+so Databricks injects `PGHOST`/`PGUSER`/`PGDATABASE`/`PGPORT`/`PGSSLMODE` and
+conversation history survives restarts.
+
+**Do not declare `postgres_branches`, `postgres_endpoints`, or the project's
+`default_endpoint_settings`.** Compute is workspace-tier-dependent: Free Edition
+pins endpoints at 1 CU and answers any write to the scale-to-zero timeout with
+`Auto-suspend timeout cannot be modified for this workspace tier`, which fails the
+deploy. Declaring the endpoint also makes DAB plan a `recreate` of the branch
+whenever its parent reference is unresolved, and recreating the production branch
+destroys the chat history. Tune compute per workspace with
+`databricks postgres update-endpoint <endpoint> "spec.suspension"` instead.
+
+Removing those declarations from a bundle that already deployed them is not enough
+on its own: the deploy then deletes the orphaned nodes and PATCHes
+`spec.default_endpoint_settings` with an empty body. `bundle deployment unbind`
+cannot help, because it resolves keys against the current config. `prune_retired_state`
+in the setup script edits the target's `resources.json` to forget them, leaving the
+live branch and endpoint running.
+
+**Never hard-code the project id.** Unpinned, it defaults to `<app-name>-lakebase`,
+which the deploy creates if it does not exist. `setup-mlflow-experiment` pins
+something better: it reuses the project the state or overrides already name while
+that project is live, adopts the newest live `<app-name>-lakebase*` project
+otherwise, and only then mints `<app-name>-lakebase-<UTC timestamp>`. That last case
+matters because a deleted project holds its id until it is purged a week later, so
+after any deletion the default name is unusable and only a re-run frees the deploy.
+The script also binds an adopted app or project and unbinds state naming one that is
+gone — the two situations that otherwise fail the deploy.
+
+**`lifecycle.prevent_destroy: true` protects the declared project.** It makes
+`databricks bundle destroy` refuse to run and blocks any deploy that would replace
+the project. Do not remove that block unless the user explicitly asks to delete
+their agent memory.
+
+That protection covers only the node that declares it. Deployment state left over
+from a resource type the config no longer declares — such as the pre-Autoscaling
+`database_instances.chatbot_lakebase` — is destroyed on the next deploy, and it can
+name the same underlying Lakebase. If a deploy prompts to delete Lakebase data,
+stop and check which node it names before approving. A deleted project is
+recoverable for seven days:
+
+```bash
+databricks postgres undelete-project projects/<project-id> --profile <profile>
+databricks bundle deployment bind chatbot_lakebase_project projects/<project-id> \
+  --target <target> --profile <profile>
+```
+
+Its slug also stays reserved until it is purged, so creating a replacement under
+the same name fails with "project slug already exists" until then.
+
+Do not rename a deployed Lakebase project casually: DAB treats a rename as
+delete-then-create, and `prevent_destroy` blocks replacement. Adopting an existing
+project requires an explicit one-time `bundle deployment bind`.
+
+> **Managed memory vs. Lakebase.** Managed memory (see the **managed-memory** skill) needs no
+> instance to provision or protect. Prefer Lakebase when direct SQL access to the history
+> matters or Postgres is already in the stack.
 
 ---
 
@@ -142,12 +261,12 @@ After installation, the skills will be available as slash commands (e.g., `/agen
 | `e2e-chatbot-app-next/` | Chat UI, vendored from `databricks/app-templates` and **locally customized** — do not delete or re-clone it |
 | `.../client/src/lib/genie-result.ts` | Parses Genie MCP query results (schema + rows) out of tool output |
 | `.../client/src/components/genie-chart.tsx` | Renders those Genie results as charts and tables |
-| `agent_server/agent.py` | Agent logic, model, instructions, MCP servers |
+| `agent_server/agent.py` | Agent logic, model, instructions, MCP servers (Genie spaces come from `GENIE_SPACE_IDS`) |
 | `agent_server/start_server.py` | FastAPI server + MLflow setup |
 | `agent_server/evaluate_agent.py` | Agent evaluation with MLflow scorers |
 | `databricks.yml` | Bundle config & resource permissions |
-| `.github/workflows/deploy.yml` | GitHub Actions workflow to deploy this app (synced from `.scripts/source/.github/workflows/`) |
-| `scripts/quickstart.py` | One-command setup script |
+| `scripts/setup_mlflow_experiment.py` | Creates/reuses the UC-backed experiment and writes DAB overrides |
+| `scripts/start_app.py` | Runtime entry point for the agent server and chat UI |
 | `scripts/discover_tools.py` | Discovers available workspace resources |
 
 ---

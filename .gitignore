@@ -177,7 +177,6 @@ mlflow.db
 .claude/*
 !.claude/skills/
 .claude/skills/*
-!.claude/skills/quickstart/
 !.claude/skills/run-locally/
 !.claude/skills/discover-tools/
 !.claude/skills/deploy/

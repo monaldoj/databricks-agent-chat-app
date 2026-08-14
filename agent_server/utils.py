@@ -38,6 +38,33 @@ def get_user_workspace_client() -> WorkspaceClient:
     return WorkspaceClient(token=token, auth_type="pat")
 
 
+# Titles only change when a space is renamed, so one lookup per process is plenty.
+_genie_space_names: dict[str, str] = {}
+
+
+def genie_space_display_name(space_id: str, workspace_client: WorkspaceClient) -> str:
+    """Name for a Genie space's MCP server, resolved from the space's title.
+
+    Only ids are configured, so the title is looked up to keep the tool listing the
+    model sees readable. A space whose title cannot be read is still attached under
+    a name built from its id: the agent queries Genie as the signed-in user, who may
+    well have access even when this lookup does not.
+    """
+    cached = _genie_space_names.get(space_id)
+    if cached:
+        return cached
+
+    try:
+        title = workspace_client.genie.get_space(space_id).title
+    except Exception:
+        logging.warning("Could not resolve title for Genie space %s", space_id, exc_info=True)
+        return f"Genie Space {space_id}"
+
+    name = f"Genie Space: {title}" if title else f"Genie Space {space_id}"
+    _genie_space_names[space_id] = name
+    return name
+
+
 def _replace_placeholder_id(event_data: dict, item_id: str) -> None:
     """Give each streamed item a unique id when the model API doesn't supply one.
 

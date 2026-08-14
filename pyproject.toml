@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn>=0.41.0",
     "databricks-openai>=0.13.0",
     "databricks-agents>=1.9.3",
+    "databricks-sdk",
     "mlflow>=3.10.0",
     "openai-agents>=0.4.1",
     # mcp 2.x dropped mcp.client.streamable_http.GetSessionIdCallback, which
@@ -31,18 +32,13 @@ dev = [
     "pytest>=9.0.2",
 ]
 
-setup = [
-    "ruamel.yaml>=0.18.0",
-]
-
 [tool.uv]
-default-groups = ["dev", "setup"]
+default-groups = ["dev"]
 
 
 [project.scripts]
-quickstart = "scripts.quickstart:main"
+setup-mlflow-experiment = "scripts.setup_mlflow_experiment:main"
 start-app = "scripts.start_app:main"
 start-server = "agent_server.start_server:main"
 agent-evaluate = "agent_server.evaluate_agent:evaluate"
 discover-tools = "scripts.discover_tools:main"
-preflight = "scripts.preflight:main"

@@ -11,17 +11,80 @@ sync:
     - "**/test-results"
     - "**/__pycache__"
 
+variables:
+  app_name:
+    description: |
+      Workspace-unique Databricks app name. `uv run setup-mlflow-experiment` pins it
+      (see its --app-name flag); BUNDLE_VAR_app_name overrides a single deploy.
+      New app names should use the agent- prefix.
+    default: "agent-web-search-genie-${bundle.target}"
+
+  experiment_id:
+    description: |
+      Existing UC-backed MLflow experiment id. Run `uv run setup-mlflow-experiment`
+      before deploying; it writes this target's local bundle override.
+
+  trace_catalog:
+    description: Unity Catalog catalog containing the experiment trace tables.
+
+  trace_schema:
+    description: Unity Catalog schema containing the experiment trace tables.
+
+  trace_table_prefix:
+    description: Prefix shared by the experiment's four OTEL trace tables.
+
+  sql_warehouse_id:
+    description: SQL warehouse used to create and query the UC trace tables.
+
+  genie_space_ids:
+    description: |
+      Optional comma-separated Genie space ids. The agent accesses them on behalf
+      of the signed-in user, so no app service-principal resource binding is needed.
+      Override with BUNDLE_VAR_genie_space_ids. The whitespace default is normalized
+      to no ids for web-search-only deployments while remaining valid for the Apps API.
+    default: " "
+
+  lakebase_project_id:
+    description: |
+      Lakebase Autoscaling project id that holds persistent agent memory. Unset, the
+      deploy uses (and creates if needed) the project named after the app. Deleting a
+      project reserves that id until it is purged a week later, so re-run
+      `uv run setup-mlflow-experiment` after a deletion: it pins a timestamped id here
+      rather than waiting out the reservation.
+    default: "${var.app_name}-lakebase"
+
+  lakebase_pg_version:
+    description: Postgres major version for the Lakebase Autoscaling project.
+    default: 17
+
 resources:
+  # The project creates its production branch and primary endpoint implicitly, and
+  # the bundle leaves both alone. Compute settings — the autoscaling range and the
+  # scale-to-zero timeout — are fixed on some tiers (Free Edition among them), which
+  # reject every write to them and fail the deploy. Tune them per workspace with
+  # `databricks postgres update-endpoint` or the Lakebase UI.
+  postgres_projects:
+    chatbot_lakebase_project:
+      project_id: ${var.lakebase_project_id}
+      display_name: ${var.lakebase_project_id}
+      pg_version: ${var.lakebase_pg_version}
+      history_retention_duration: "604800s"
+      lifecycle:
+        prevent_destroy: true
+
   apps:
     responses_agent_chat_app:
-      name: "responses-agent-chat-app"
+      name: ${var.app_name}
       description: "Responses agent with web search and Genie, with a chat UI"
       source_code_path: ./
+      lifecycle:
+        started: true
 
       # The agent calls the Genie MCP server with the signed-in user's token
       # (see get_user_workspace_client), which needs this scope to be forwarded.
       user_api_scopes:
         - "mcp.genie"
+
       config:
         command: ["uv", "run", "start-app"]
         env:
@@ -37,20 +100,56 @@ resources:
             value: "300"
           - name: MLFLOW_EXPERIMENT_ID
             value_from: "experiment"
+          - name: MLFLOW_TRACING_DESTINATION
+            value: "${var.trace_catalog}.${var.trace_schema}"
+          - name: MLFLOW_TRACING_SQL_WAREHOUSE_ID
+            value: ${var.sql_warehouse_id}
+          - name: GENIE_SPACE_IDS
+            value: ${var.genie_space_ids}
 
-      # Resources which this app has access to
       resources:
+        # The setup script creates this UC-backed experiment. DAB binds it to the app
+        # and passes its id through the "experiment" value_from reference above.
         - name: 'experiment'
           experiment:
-            experiment_id: "1386037587619529"
+            experiment_id: ${var.experiment_id}
             permission: 'CAN_MANAGE'
 
-        # Both names are capped at 30 characters by the Apps API.
-        - name: 'genie-campus-card-swipe'
-          genie_space:
-            name: 'Campus Card Swipe Analytics'
-            space_id: '01f169d6d34a1233bb6d5ab580b58495'
-            permission: 'CAN_RUN'
+        - name: 'trace-warehouse'
+          sql_warehouse:
+            id: ${var.sql_warehouse_id}
+            permission: 'CAN_USE'
+
+        # MODIFY includes SELECT for tables. Declaring them as app resources also
+        # grants USE_CATALOG and USE_SCHEMA automatically.
+        - name: 'trace-spans-modify'
+          uc_securable:
+            securable_type: TABLE
+            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_spans"
+            permission: MODIFY
+        - name: 'trace-annotations-modify'
+          uc_securable:
+            securable_type: TABLE
+            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_annotations"
+            permission: MODIFY
+        - name: 'trace-logs-modify'
+          uc_securable:
+            securable_type: TABLE
+            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_logs"
+            permission: MODIFY
+        - name: 'trace-metrics-modify'
+          uc_securable:
+            securable_type: TABLE
+            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_metrics"
+            permission: MODIFY
+
+        # Persistent agent memory. As the app's first Postgres resource this makes
+        # Databricks inject PGHOST/PGUSER/PGDATABASE/PGPORT/PGSSLMODE into the app.
+        - name: 'database'
+          postgres:
+            branch: "${resources.postgres_projects.chatbot_lakebase_project.name}/branches/production"
+            database: "${resources.postgres_projects.chatbot_lakebase_project.name}/branches/production/databases/databricks-postgres"
+            permission: CAN_CONNECT_AND_CREATE
 
 targets:
   dev:
@@ -63,7 +162,3 @@ targets:
     mode: production
     # workspace:
     #   host: https://...
-    resources:
-      apps:
-        responses_agent_chat_app:
-          name: responses-agent-chat-app
