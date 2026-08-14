@@ -1,4 +1,7 @@
+import asyncio
+import json
 import logging
+from time import monotonic
 from typing import Any, AsyncGenerator, AsyncIterator, Optional
 from uuid import uuid4
 
@@ -7,6 +10,8 @@ from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
 from agents.result import StreamEvent
 from databricks.sdk import WorkspaceClient
 from databricks_openai import AsyncDatabricksOpenAI
+from databricks_openai.agents import McpServer
+from mcp.types import CallToolResult
 from mlflow.genai.agent_server import get_request_headers
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentStreamEvent
 
@@ -65,6 +70,98 @@ def genie_space_display_name(space_id: str, workspace_client: WorkspaceClient) -
     name = f"Genie Space: {title}" if title else f"Genie Space {space_id}"
     _genie_space_names[space_id] = name
     return name
+
+
+# Genie's MCP tools come in pairs per space: query_space_<id> starts a message and
+# poll_response_<id> reads it once it has finished.
+_GENIE_QUERY_TOOL_PREFIX = "query_space_"
+_GENIE_POLL_TOOL_PREFIX = "poll_response_"
+# Statuses a Genie message stops at. Any other status means it is still working:
+# SUBMITTED, ASKING_AI, PENDING_WAREHOUSE and EXECUTING_QUERY all appear on the way.
+_GENIE_FINAL_STATUSES = frozenset({"COMPLETED", "FAILED", "CANCELLED", "QUERY_RESULT_EXPIRED"})
+_GENIE_POLL_INTERVAL_SECONDS = 3.0
+# A ceiling, not an expectation: a warehouse that has to start costs the most time here.
+# It stays well inside the chat proxy's own request timeout (CHAT_PROXY_TIMEOUT_SECONDS).
+_GENIE_POLL_TIMEOUT_SECONDS = 180.0
+
+
+def _genie_payload(result: CallToolResult) -> dict:
+    """The JSON object a Genie tool answered with, or an empty one if it isn't JSON."""
+    text = "".join(getattr(block, "text", "") or "" for block in result.content or [])
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _genie_poll_arguments(result: CallToolResult) -> dict[str, str] | None:
+    """Arguments for polling the message this result describes, or None if it finished.
+
+    Failures and unrecognized answers read as finished: the model is better served by
+    the message Genie sent than by waiting out the timeout on something that will not
+    change.
+    """
+    payload = _genie_payload(result)
+    status = payload.get("status")
+    if not isinstance(status, str) or status in _GENIE_FINAL_STATUSES:
+        return None
+    conversation_id = payload.get("conversationId") or payload.get("conversation_id")
+    message_id = payload.get("messageId") or payload.get("message_id")
+    if not conversation_id or not message_id:
+        return None
+    return {"conversation_id": conversation_id, "message_id": message_id}
+
+
+class GenieMcpServer(McpServer):
+    """Genie MCP server that does its own polling.
+
+    A question that outlives Genie's own wait comes back as a message id and a status
+    such as EXECUTING_QUERY, leaving the caller to poll for the result. Both tool
+    descriptions ask the model to do that, and small models tend instead to pass the
+    "still processing" note to the user as though it were the answer, ending the turn
+    with no data in it. Polling here means the query tool returns once, with the result,
+    whichever model is driving it — and spends no model turns on the wait.
+    """
+
+    async def call_tool(
+        self, tool_name: str, arguments: dict[str, Any] | None, **kwargs: Any
+    ) -> CallToolResult:
+        result = await super().call_tool(tool_name, arguments, **kwargs)
+        if not tool_name.startswith(_GENIE_QUERY_TOOL_PREFIX):
+            return result
+
+        space_id = tool_name[len(_GENIE_QUERY_TOOL_PREFIX) :]
+        poll_tool = f"{_GENIE_POLL_TOOL_PREFIX}{space_id}"
+        deadline = monotonic() + _GENIE_POLL_TIMEOUT_SECONDS
+        while (poll_arguments := _genie_poll_arguments(result)) is not None:
+            if monotonic() >= deadline:
+                logging.warning(
+                    "Genie message %s has not finished after %ss; handing its status to "
+                    "the model to poll for itself",
+                    poll_arguments["message_id"],
+                    _GENIE_POLL_TIMEOUT_SECONDS,
+                )
+                return result
+            await asyncio.sleep(_GENIE_POLL_INTERVAL_SECONDS)
+            result = await super().call_tool(poll_tool, poll_arguments, **kwargs)
+        return result
+
+
+def adapt_input_for_chat_completions(items: list[dict]) -> list[dict]:
+    """Give echoed assistant turns the id the chat completions converter looks for.
+
+    The chat client sends each earlier assistant turn back as a Responses-shaped message
+    carrying no id, which the Responses API accepts. The agents SDK recognizes an
+    assistant message on the chat completions path only when it has one, and rejects the
+    whole conversation with "Unhandled item type or structure" otherwise, so every
+    question after the first fails. The id is used for nothing but that recognition here:
+    it never reaches the provider, which is why the SDK's own placeholder fits.
+    """
+    for item in items:
+        if item.get("type") == "message" and item.get("role") == "assistant":
+            item.setdefault("id", FAKE_RESPONSES_ID)
+    return items
 
 
 def _part_field(part: Any, field: str) -> Any:

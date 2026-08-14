@@ -29,6 +29,8 @@ from mlflow.types.responses import (
 from agent_server.utils import (
     GatewayChatCompletionsModel,
     GatewayOpenAI,
+    GenieMcpServer,
+    adapt_input_for_chat_completions,
     build_mcp_url,
     genie_space_display_name,
     get_user_workspace_client,
@@ -71,6 +73,14 @@ data shows in prose instead, and refer to the chart as something the user can al
 This applies only to Genie results. You may still use mermaid for diagrams that illustrate \
 a process or relationship, and for charting figures gathered from other tools such as web \
 search."""
+
+# The Genie tools wait out their own queries (see GenieMcpServer), so a model only meets
+# an unfinished one when that wait ran long. Left unsaid, smaller models pass the status
+# on to the user as if it answered the question.
+GENIE_PENDING_INSTRUCTIONS = """\
+If a Genie tool reports that a query is still processing, call its poll tool again with the \
+conversation and message ids the tool returned, until the query reaches a completed state. \
+Never answer by telling the user to wait or to poll for the result themselves."""
 
 # Said only to models that cannot be given the hosted web search tool, so they don't
 # offer to look something up and then answer from memory as if they had.
@@ -213,7 +223,7 @@ SELECTED_MODEL = configured_model()
 MODEL_PROFILE = model_profile(SELECTED_MODEL, REASONING_EFFORT)
 
 INSTRUCTIONS = "\n\n".join(
-    [SYSTEM_PROMPT, GENIE_VISUALIZATION_INSTRUCTIONS]
+    [SYSTEM_PROMPT, GENIE_VISUALIZATION_INSTRUCTIONS, GENIE_PENDING_INSTRUCTIONS]
     + ([] if MODEL_PROFILE.hosted_tools else [NO_WEB_SEARCH_INSTRUCTIONS])
 )
 
@@ -258,8 +268,8 @@ def genie_space_ids() -> List[str]:
 def init_mcp_servers():
     user_workspace_client = get_mcp_user_workspace_client()
 
-    def server(name: str, url: str) -> McpServer:
-        return McpServer(
+    def server(name: str, url: str, kind: type[McpServer] = McpServer) -> McpServer:
+        return kind(
             name=name,
             url=build_mcp_url(url, user_workspace_client),
             workspace_client=user_workspace_client,
@@ -274,6 +284,7 @@ def init_mcp_servers():
         server(
             genie_space_display_name(space_id, user_workspace_client),
             f"{GENIE_MCP_PATH_PREFIX}{space_id}",
+            GenieMcpServer,  # polls Genie's own asynchronous queries to completion
         )
         for space_id in genie_space_ids()
     )
@@ -295,12 +306,20 @@ def create_agent(mcp_servers: List[MCPServer]) -> Agent:
     )
 
 
+def conversation_items(request: ResponsesAgentRequest) -> List[dict]:
+    """The conversation so far, in the shape the selected model's API accepts."""
+    items = [item.model_dump() for item in request.input]
+    if MODEL_PROFILE.api == "chat_completions":
+        adapt_input_for_chat_completions(items)
+    return items
+
+
 @invoke()
 async def invoke(request: ResponsesAgentRequest) -> ResponsesAgentResponse:
     mcp_servers = init_mcp_servers()
     async with MCPServerManager(servers = mcp_servers, connect_in_parallel=True) as manager:
         agent = create_agent(manager.active_servers)
-        messages = [i.model_dump() for i in request.input]
+        messages = conversation_items(request)
         result = await Runner.run(agent, messages)
         return ResponsesAgentResponse(output=[item.to_input_item() for item in result.new_items])
 
@@ -310,7 +329,7 @@ async def stream(request: dict) -> AsyncGenerator[ResponsesAgentStreamEvent, Non
     mcp_servers = init_mcp_servers()
     async with MCPServerManager(servers = mcp_servers, connect_in_parallel=True) as manager:
         agent = create_agent(manager.active_servers)
-        messages = [i.model_dump() for i in request.input]
+        messages = conversation_items(request)
         result = Runner.run_streamed(agent, input=messages)
 
         async for event in process_agent_stream_events(result.stream_events()):

@@ -249,6 +249,27 @@ MLflow autologging sees Gemini responses before that normalization, so it logs p
 serializer warnings and cannot aggregate streamed chunks (the gateway sends `id: null`).
 Traces are still recorded; the warnings are noise.
 
+The chat client sends earlier assistant turns back as Responses-shaped messages with no
+id. The Responses API accepts that, while the agents SDK recognizes an assistant message
+on the chat completions path only when it carries one — otherwise it raises "Unhandled item
+type or structure" and every question after the first fails. `conversation_items()` in
+`agent_server/agent.py` fills the id in for that path; it serves only that recognition and
+never reaches the provider.
+
+---
+
+## Genie's asynchronous queries
+
+A Genie question that outlives the MCP server's own wait comes back as a message id and a
+status such as `EXECUTING_QUERY`, and the caller is expected to call
+`poll_response_<space id>` until the message completes. `GenieMcpServer` in
+`agent_server/utils.py` does that polling, so the query tool returns once, with the result.
+Both Genie tool descriptions ask the model to poll instead, which strong models do and
+small ones do not — they hand the "still processing" note to the user as though it answered
+the question. Polling stops at `COMPLETED`, `FAILED`, `CANCELLED` or
+`QUERY_RESULT_EXPIRED`, and gives up after 180s; the model keeps the poll tool and is told
+to use it in that case.
+
 ---
 
 ## Persistent Agent Memory (Lakebase)
