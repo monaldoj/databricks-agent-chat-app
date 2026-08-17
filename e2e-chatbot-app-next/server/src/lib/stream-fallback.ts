@@ -73,6 +73,35 @@ export async function drainStreamToWriter(
  *   tool-result→ tool-output-available
  *   tool-error, tool-approval-request → ignored (not expected in fallback)
  */
+/** Split a generateText string into deltas so the client still paints incrementally. */
+function writeStreamingText(
+  writer: UIMessageStreamWriter,
+  kind: 'text' | 'reasoning',
+  id: string,
+  text: string,
+) {
+  if (text.length === 0) return;
+
+  if (kind === 'text') {
+    writer.write({ type: 'text-start', id });
+    for (const token of text.split(/(\s+)/)) {
+      if (token.length > 0) {
+        writer.write({ type: 'text-delta', id, delta: token });
+      }
+    }
+    writer.write({ type: 'text-end', id });
+    return;
+  }
+
+  writer.write({ type: 'reasoning-start', id });
+  for (const token of text.split(/(\s+)/)) {
+    if (token.length > 0) {
+      writer.write({ type: 'reasoning-delta', id, delta: token });
+    }
+  }
+  writer.write({ type: 'reasoning-end', id });
+}
+
 function writeGenerateTextResultToStream(
   result: Awaited<ReturnType<typeof generateText>>,
   writer: UIMessageStreamWriter,
@@ -82,19 +111,11 @@ function writeGenerateTextResultToStream(
 
     switch (part.type) {
       case 'text': {
-        if (part.text.length > 0) {
-          writer.write({ type: 'text-start', id });
-          writer.write({ type: 'text-delta', id, delta: part.text });
-          writer.write({ type: 'text-end', id });
-        }
+        writeStreamingText(writer, 'text', id, part.text);
         break;
       }
       case 'reasoning': {
-        if (part.text.length > 0) {
-          writer.write({ type: 'reasoning-start', id });
-          writer.write({ type: 'reasoning-delta', id, delta: part.text });
-          writer.write({ type: 'reasoning-end', id });
-        }
+        writeStreamingText(writer, 'reasoning', id, part.text);
         break;
       }
       case 'file': {
@@ -168,17 +189,22 @@ export async function fallbackToGenerateText(
   try {
     const fallback = await generateText(params);
 
-    const traceId = (fallback?.response?.body as {
-      metadata: {
-        trace_id: string;
-      };
-    })?.metadata?.trace_id;
+    const traceId = (
+      fallback?.response?.body as {
+        metadata: {
+          trace_id: string;
+        };
+      }
+    )?.metadata?.trace_id;
 
     writeGenerateTextResultToStream(fallback, writer);
 
     return { usage: fallback.usage, traceId };
   } catch (fallbackError) {
-    console.error('[fallbackToGenerateText] generateText fallback also failed:', fallbackError);
+    console.error(
+      '[fallbackToGenerateText] generateText fallback also failed:',
+      fallbackError,
+    );
     const errorMessage =
       fallbackError instanceof Error
         ? fallbackError.message

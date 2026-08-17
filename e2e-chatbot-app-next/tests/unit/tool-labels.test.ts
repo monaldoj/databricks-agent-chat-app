@@ -23,6 +23,13 @@ test('recognises a multi-word Genie action prefix', () => {
   });
 });
 
+test('recognises a Genie poll tool', () => {
+  expect(parseGenieToolName(`poll_response_${SPACE_ID}`)).toEqual({
+    spaceId: SPACE_ID,
+    action: 'Genie',
+  });
+});
+
 test('leaves non-Genie tools alone', () => {
   expect(parseGenieToolName('web_search')).toBeNull();
   expect(parseGenieToolName('python_exec')).toBeNull();

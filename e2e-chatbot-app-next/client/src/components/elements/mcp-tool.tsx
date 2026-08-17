@@ -141,7 +141,7 @@ export const McpToolHeader = ({
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="truncate font-mono text-sm">{toolName}</span>
+        <span className="truncate font-medium text-sm">{toolName}</span>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {/* Only show tool status badge when tool is running/completed (approved) */}

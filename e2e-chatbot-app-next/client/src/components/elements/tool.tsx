@@ -6,10 +6,27 @@ import {
 } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import type { ToolUIPart } from 'ai';
-import { useContext, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 import { CodeBlock } from './code-block';
 import { createContext } from 'react';
-import { ChevronUpIcon, ShieldCheckIcon, ShieldOffIcon as ShieldXIcon, XCircleIcon, CircleOutlineIcon as CircleIcon, ClockIcon, ChevronDownIcon, WrenchIcon, CheckCircleIcon } from '../icons';
+import {
+  ChevronUpIcon,
+  ShieldCheckIcon,
+  ShieldOffIcon as ShieldXIcon,
+  XCircleIcon,
+  CircleOutlineIcon as CircleIcon,
+  ClockIcon,
+  ChevronDownIcon,
+  WrenchIcon,
+  CheckCircleIcon,
+} from '../icons';
 
 // Shared types - uses AI SDK's native tool states
 export type ToolState = ToolUIPart['state'];
@@ -73,7 +90,10 @@ export const ToolStatusBadge = ({ state, className }: ToolStatusBadgeProps) => {
 };
 
 // Shared container component
-type ToolContainerProps = ComponentProps<typeof Collapsible>;
+type ToolContainerProps = Omit<
+  ComponentProps<typeof Collapsible>,
+  'open' | 'onOpenChange'
+>;
 
 const ToolContext = createContext<{
   open: boolean;
@@ -81,39 +101,67 @@ const ToolContext = createContext<{
   open: false,
 });
 
-export const ToolContainer = ({ className, ...props }: ToolContainerProps) => {
-  const [open, setOpen] = useState(props.defaultOpen || false);
+export const ToolContainer = ({
+  className,
+  defaultOpen = false,
+  children,
+  ...props
+}: ToolContainerProps) => {
+  const [open, setOpen] = useState(Boolean(defaultOpen));
+  const autoOpenedForApproval = useRef(Boolean(defaultOpen));
 
-  // A tool can become an approval request after it has already mounted, and the
-  // Allow/Deny buttons sit inside this panel. Opening on that change keeps them
-  // reachable. This never closes the panel, so a reader's own choice sticks.
+  // Open when this becomes an approval request (Allow/Deny live inside the
+  // panel). Collapse again once it is resolved so the JSON is not left sitting
+  // in the transcript.
   useEffect(() => {
-    if (props.defaultOpen) setOpen(true);
-  }, [props.defaultOpen]);
+    if (defaultOpen) {
+      setOpen(true);
+      autoOpenedForApproval.current = true;
+    } else if (autoOpenedForApproval.current) {
+      setOpen(false);
+      autoOpenedForApproval.current = false;
+    }
+  }, [defaultOpen]);
 
   return (
     <ToolContext.Provider value={{ open }}>
       <Collapsible
-        className={cn('not-prose w-full rounded-xl border', className)}
+        className={cn(
+          'not-prose w-full overflow-hidden rounded-xl border',
+          className,
+        )}
         open={open}
         onOpenChange={setOpen}
         {...props}
-      /></ToolContext.Provider>
+      >
+        {children}
+      </Collapsible>
+    </ToolContext.Provider>
   );
-}
+};
 
 // Shared collapsible content component
 type ToolContentProps = ComponentProps<typeof CollapsibleContent>;
 
-export const ToolContent = ({ className, ...props }: ToolContentProps) => (
-  <CollapsibleContent
-    className={cn(
-      'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-popover-foreground outline-hidden data-[state=closed]:animate-out data-[state=open]:animate-in',
-      className,
-    )}
-    {...props}
-  />
-);
+export const ToolContent = ({
+  className,
+  children,
+  ...props
+}: ToolContentProps) => {
+  const { open } = useContext(ToolContext);
+  return (
+    <CollapsibleContent
+      className={cn(
+        'overflow-hidden text-popover-foreground outline-hidden',
+        'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 data-[state=closed]:animate-out data-[state=open]:animate-in',
+        className,
+      )}
+      {...props}
+    >
+      {open ? children : null}
+    </CollapsibleContent>
+  );
+};
 
 // Shared input component
 type ToolInputProps = ComponentProps<'div'> & {
@@ -202,4 +250,4 @@ export const ToolHeader = ({
       </div>
     </CollapsibleTrigger>
   );
-}
+};

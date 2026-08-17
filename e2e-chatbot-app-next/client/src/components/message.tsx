@@ -1,6 +1,5 @@
 import React, { memo, useState } from 'react';
-import { AnimatedAssistantIcon } from './animation-assistant-icon';
-import { Response } from './elements/response';
+import { MessageMarkdown } from './message-markdown';
 import { MessageContent } from './elements/message';
 import {
   Tool,
@@ -23,7 +22,6 @@ import equal from 'fast-deep-equal';
 import { cn, sanitizeText } from '@/lib/utils';
 import { MessageEditor } from './message-editor';
 import { MessageReasoning } from './message-reasoning';
-import { Shimmer } from './ui/shimmer';
 import type { UseChatHelpers } from '@ai-sdk/react';
 import type { ChatMessage, Feedback } from '@chat-template/core';
 import { useDataStream } from './data-stream-provider';
@@ -38,7 +36,6 @@ import { MessageOAuthError } from './message-oauth-error';
 import { isCredentialErrorMessage } from '@/lib/oauth-error-utils';
 import {
   groupConsecutiveToolSegments,
-  type ChatPart,
   type ToolPart,
 } from '@/lib/tool-group-segments';
 import { Streamdown } from 'streamdown';
@@ -140,10 +137,6 @@ const PurePreviewMessage = ({
           'justify-start': message.role === 'assistant',
         })}
       >
-        {partSegments.length === 0 && errorParts.length === 0 && message.role === 'assistant' && (
-          <AwaitingResponseMessage />
-        )}
-
         <div
           className={cn('flex min-w-0 flex-col gap-3', {
             'w-full': message.role === 'assistant' || mode === 'edit',
@@ -225,9 +218,9 @@ const PurePreviewMessage = ({
                           message.role === 'assistant',
                       })}
                     >
-                      <Response>
+                      <MessageMarkdown>
                         {sanitizeText(joinMessagePartSegments(parts))}
-                      </Response>
+                      </MessageMarkdown>
                     </MessageContent>
                   </div>
                 );
@@ -329,13 +322,15 @@ export const PreviewMessage = memo(
     if (prevProps.requiresScrollPadding !== nextProps.requiresScrollPadding)
       return false;
     if (!equal(prevProps.message.parts, nextProps.message.parts)) return false;
-    if (prevProps.initialFeedback?.feedbackType !== nextProps.initialFeedback?.feedbackType)
+    if (
+      prevProps.initialFeedback?.feedbackType !==
+      nextProps.initialFeedback?.feedbackType
+    )
       return false;
 
     return true; // Props are equal, skip re-render
   },
 );
-
 
 const MessageToolGroup = ({
   tools,
@@ -425,7 +420,10 @@ const ToolPartRenderer = ({
   // Genie names its tools after the space id, which says nothing to a reader,
   // so the space's own title stands in for it where one can be resolved.
   const genieSpaceId = parseGenieToolName(toolName)?.spaceId;
-  const displayName = toolDisplayName(toolName, useGenieSpaceTitle(genieSpaceId));
+  const displayName = toolDisplayName(
+    toolName,
+    useGenieSpaceTitle(genieSpaceId),
+  );
 
   const isMcpApproval =
     part.callProviderMetadata?.databricks?.approvalRequestId != null;
@@ -519,21 +517,5 @@ const ToolPartRenderer = ({
         )}
       </ToolContent>
     </Tool>
-  );
-};
-
-export const AwaitingResponseMessage = () => {
-  const role = 'assistant';
-
-  return (
-    <div
-      data-testid="message-assistant-loading"
-      className="group/message w-full"
-      data-role={role}
-    >
-      <div className="flex items-start justify-start gap-3">
-        <Shimmer className="flex items-center">Generating response</Shimmer>
-      </div>
-    </div>
   );
 };

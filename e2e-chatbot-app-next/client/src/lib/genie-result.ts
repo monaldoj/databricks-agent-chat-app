@@ -235,11 +235,27 @@ const HORIZONTAL_THRESHOLD = 12;
 const MAX_SERIES = 6;
 
 /**
+ * Columns that number rows rather than measure them.
+ *
+ * Genie routinely returns a rank or an id beside the figures it was asked for,
+ * and both are integers, so the schema cannot tell them apart from a measure.
+ * Plotted as a series they put 1..n next to real values on a shared axis, which
+ * reads as data. Matching is by name, and deliberately narrow: dropping a real
+ * measure would take figures out of the chart, while keeping a rank only adds
+ * noise. The column stays in the result set either way, so the table shows it.
+ */
+const INDEX_LIKE_COLUMN =
+  /^(id|idx|index|rank|row|row_id|row_num|row_number|rownum|row_index)$|_(id|rank)$/;
+
+const isIndexLikeColumn = (column: GenieColumn): boolean =>
+  INDEX_LIKE_COLUMN.test(column.name.toLowerCase());
+
+/**
  * Decide how to draw a result set, or return null to leave it as a table.
  *
  * Genie's API exposes no chart type, so the shape is inferred from the column
- * schema alone. Row order is never changed — Genie's ORDER BY is the intended
- * ordering and re-sorting here would misrepresent the answer.
+ * schema and names alone. Row order is never changed — Genie's ORDER BY is the
+ * intended ordering and re-sorting here would misrepresent the answer.
  */
 export function buildChartSpec(result: GenieResultSet): GenieChartSpec | null {
   // One row is a single fact, better read as a table than plotted.
@@ -247,7 +263,7 @@ export function buildChartSpec(result: GenieResultSet): GenieChartSpec | null {
 
   const series = result.columns
     .map((column, columnIndex) => ({ column, columnIndex }))
-    .filter(({ column }) => column.kind === 'numeric')
+    .filter(({ column }) => column.kind === 'numeric' && !isIndexLikeColumn(column))
     .slice(0, MAX_SERIES);
   if (series.length === 0) return null;
 

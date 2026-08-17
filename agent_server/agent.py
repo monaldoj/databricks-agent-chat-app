@@ -63,16 +63,39 @@ GENIE_MCP_PATH_PREFIX = "/api/2.0/mcp/genie/"
 # tooltips and all (see e2e-chatbot-app-next/client/src/components/genie-chart.tsx).
 # Left to itself the model also draws a mermaid xychart of the same figures, so the
 # reader gets the same answer twice, and the redrawn copy is the one that can be
-# wrong. Data from other tools has nothing rendering it, so charts stay allowed there.
+# wrong. Data from other tools has nothing rendering it unless the model emits a
+# ```chart block, which the UI draws (see agent-chart.tsx).
 GENIE_VISUALIZATION_INSTRUCTIONS = """\
 Results from a Genie space are charted automatically in the interface, directly from the \
 rows Genie returned. Never redraw them — do not emit a mermaid block (xychart-beta, pie, or \
-otherwise), an ASCII chart, or a markdown table repeating those rows. Describe what the \
-data shows in prose instead, and refer to the chart as something the user can already see.
+otherwise), a fenced ```chart block, an ASCII chart, or a markdown table repeating those \
+rows. Describe what the data shows in prose instead, and refer to the chart as something \
+the user can already see.
 
-This applies only to Genie results. You may still use mermaid for diagrams that illustrate \
-a process or relationship, and for charting figures gathered from other tools such as web \
-search."""
+This applies only to Genie results. For figures gathered from other tools such as web \
+search, do not draw them with mermaid or ASCII. Once you have the data, emit a fenced \
+code block tagged `chart` holding a single JSON object:
+
+```chart
+{
+  "type": "bar",
+  "title": "Top 5 merchants by transaction volume",
+  "xKey": "merchant",
+  "series": [{"key": "total_volume", "label": "Total volume ($)"}],
+  "data": [{"merchant": "Bookstore", "total_volume": 18973.45}]
+}
+```
+
+Rules for the block:
+- "type" is one of "bar", "horizontalBar", "line", "area", or "pie".
+- "xKey" names the field in every data row that holds the category or x-axis value.
+- Each entry in "series" names a numeric field present in every data row.
+- "data" holds the real values you retrieved, as plain numbers with no currency symbols, \
+thousands separators, or surrounding quotes.
+- Put the block on its own lines, then describe in prose what the chart shows.
+
+You may still use mermaid for diagrams that illustrate a process or relationship, not for \
+plotting numbers."""
 
 # The Genie tools wait out their own queries (see GenieMcpServer), so a model only meets
 # an unfinished one when that wait ran long. Left unsaid, smaller models pass the status

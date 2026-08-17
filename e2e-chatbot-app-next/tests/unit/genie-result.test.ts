@@ -25,16 +25,23 @@ const CITY_ROWS: [string, string][] = [
 function genieResponse(
   columns: { name: string; type_name: string }[],
   rows: string[][],
-  overrides: { statementId?: string; truncated?: boolean; totalRowCount?: number } = {},
+  overrides: {
+    statementId?: string;
+    truncated?: boolean;
+    totalRowCount?: number;
+  } = {},
 ) {
   return {
     content: {
       queryAttachments: [
         {
-          query: 'SELECT `txn_city`, COUNT(*) AS swipe_count\nFROM `card_swipe_transactions`',
-          description: 'You want to see the number of card swipes for each city.',
+          query:
+            'SELECT `txn_city`, COUNT(*) AS swipe_count\nFROM `card_swipe_transactions`',
+          description:
+            'You want to see the number of card swipes for each city.',
           statement_response: {
-            statement_id: overrides.statementId ?? '01f195a0-a111-1b3b-b259-170b112ad3ee',
+            statement_id:
+              overrides.statementId ?? '01f195a0-a111-1b3b-b259-170b112ad3ee',
             status: { state: 'SUCCEEDED' },
             manifest: {
               format: 'JSON_ARRAY',
@@ -111,7 +118,9 @@ test.describe('parseGenieResults', () => {
   });
 
   test('flags truncation when Genie returned fewer rows than matched', () => {
-    const response = genieResponse(CITY_COLUMNS, CITY_ROWS, { totalRowCount: 500 });
+    const response = genieResponse(CITY_COLUMNS, CITY_ROWS, {
+      totalRowCount: 500,
+    });
     const [result] = parseGenieResults(response);
 
     expect(result.truncated).toBe(true);
@@ -126,7 +135,9 @@ test.describe('buildChartSpec', () => {
 
     expect(spec?.type).toBe('bar');
     expect(spec?.axisColumn.name).toBe('txn_city');
-    expect(spec?.series.map((entry) => entry.column.name)).toEqual(['swipe_count']);
+    expect(spec?.series.map((entry) => entry.column.name)).toEqual([
+      'swipe_count',
+    ]);
   });
 
   test("preserves Genie's row order rather than re-sorting", () => {
@@ -134,13 +145,16 @@ test.describe('buildChartSpec', () => {
     const [result] = parseGenieResults(genieResponse(CITY_COLUMNS, shuffled));
     const spec = buildChartSpec(result);
 
-    expect(
-      spec?.rowIndices.map((index) => result.rows[index][0]),
-    ).toEqual(shuffled.map(([city]) => city));
+    expect(spec?.rowIndices.map((index) => result.rows[index][0])).toEqual(
+      shuffled.map(([city]) => city),
+    );
   });
 
   test('turns sideways once there are too many categories to label', () => {
-    const many = Array.from({ length: 15 }, (_, i) => [`city-${i}`, String(100 - i)]);
+    const many = Array.from({ length: 15 }, (_, i) => [
+      `city-${i}`,
+      String(100 - i),
+    ]);
     const [result] = parseGenieResults(genieResponse(CITY_COLUMNS, many));
 
     expect(buildChartSpec(result)?.type).toBe('horizontalBar');
@@ -175,10 +189,75 @@ test.describe('buildChartSpec', () => {
     ];
     const [result] = parseGenieResults(genieResponse(columns, rows));
 
-    expect(buildChartSpec(result)?.series.map((entry) => entry.column.name)).toEqual([
-      'swipe_count',
-      'total_amount',
-    ]);
+    expect(
+      buildChartSpec(result)?.series.map((entry) => entry.column.name),
+    ).toEqual(['swipe_count', 'total_amount']);
+  });
+
+  test('keeps a rank column out of the series, and in the table', () => {
+    const columns = [
+      { name: 'merchant_category', type_name: 'STRING' },
+      { name: 'avg_amount_usd', type_name: 'DOUBLE' },
+      { name: 'rank', type_name: 'INT' },
+    ];
+    const rows = [
+      ['Retail', '45.17', '1'],
+      ['Dining', '43.19', '2'],
+      ['E-commerce', '41.20', '3'],
+    ];
+    const [result] = parseGenieResults(genieResponse(columns, rows));
+
+    expect(
+      buildChartSpec(result)?.series.map((entry) => entry.column.name),
+    ).toEqual(['avg_amount_usd']);
+    expect(result.columns.map((column) => column.name)).toContain('rank');
+  });
+
+  test('keeps an id column out of the series', () => {
+    const columns = [
+      { name: 'txn_city', type_name: 'STRING' },
+      { name: 'merchant_id', type_name: 'LONG' },
+      { name: 'swipe_count', type_name: 'LONG' },
+    ];
+    const rows = [
+      ['Toronto', '9001', '421'],
+      ['Seattle', '9002', '420'],
+    ];
+    const [result] = parseGenieResults(genieResponse(columns, rows));
+
+    expect(
+      buildChartSpec(result)?.series.map((entry) => entry.column.name),
+    ).toEqual(['swipe_count']);
+  });
+
+  test('still plots measures whose names only resemble an index', () => {
+    const columns = [
+      { name: 'txn_city', type_name: 'STRING' },
+      { name: 'identified_frauds', type_name: 'LONG' },
+      { name: 'rank_change', type_name: 'LONG' },
+    ];
+    const rows = [
+      ['Toronto', '12', '3'],
+      ['Seattle', '9', '1'],
+    ];
+    const [result] = parseGenieResults(genieResponse(columns, rows));
+
+    expect(
+      buildChartSpec(result)?.series.map((entry) => entry.column.name),
+    ).toEqual(['identified_frauds', 'rank_change']);
+  });
+
+  test('leaves a result whose only numbers are ids as a table', () => {
+    const columns = [
+      { name: 'txn_city', type_name: 'STRING' },
+      { name: 'merchant_id', type_name: 'LONG' },
+    ];
+    const rows = [
+      ['Toronto', '9001'],
+      ['Seattle', '9002'],
+    ];
+    const [result] = parseGenieResults(genieResponse(columns, rows));
+    expect(buildChartSpec(result)).toBeNull();
   });
 
   test('leaves a single-row answer as a table', () => {

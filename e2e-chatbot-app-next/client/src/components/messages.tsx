@@ -1,4 +1,5 @@
-import { PreviewMessage, AwaitingResponseMessage } from './message';
+import { PreviewMessage } from './message';
+import { ActivityIndicator } from './activity-indicator';
 import { memo, useEffect } from 'react';
 import equal from 'fast-deep-equal';
 import type { UseChatHelpers } from '@ai-sdk/react';
@@ -85,12 +86,14 @@ function PureMessages({
             />
           ))}
 
-          {status === 'submitted' &&
-            messages.length > 0 &&
-            messages[messages.length - 1].role === 'user' &&
-            selectedModelId !== 'chat-model-reasoning' && (
-              <AwaitingResponseMessage />
-            )}
+          {/* Stays up for the whole turn, not just the wait before the first
+              token, so Genie handoffs never look like a hang. */}
+          {selectedModelId !== 'chat-model-reasoning' && (
+            <ActivityIndicator
+              status={status}
+              lastMessage={messages[messages.length - 1]}
+            />
+          )}
 
           <div
             ref={messagesEndRef}
@@ -119,6 +122,9 @@ export const Messages = memo(PureMessages, (prevProps, nextProps) => {
     return false;
   }
 
+  // The activity indicator keys off status, so a turn ending without changing
+  // the message list still has to re-render or the indicator never clears.
+  if (prevProps.status !== nextProps.status) return false;
   if (prevProps.selectedModelId !== nextProps.selectedModelId) return false;
   if (prevProps.messages.length !== nextProps.messages.length) return false;
   if (!equal(prevProps.messages, nextProps.messages)) return false;

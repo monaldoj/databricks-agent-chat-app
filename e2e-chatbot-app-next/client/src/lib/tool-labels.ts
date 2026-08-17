@@ -17,6 +17,7 @@ const GENIE_TOOL_PATTERN = /^([a-z_]+?)_([0-9a-f]{32})$/i;
 const GENIE_ACTION_LABELS: Record<string, string> = {
   query_space: 'Genie',
   get_space_info: 'Genie space details',
+  poll_response: 'Genie',
 };
 
 export type GenieToolName = {
