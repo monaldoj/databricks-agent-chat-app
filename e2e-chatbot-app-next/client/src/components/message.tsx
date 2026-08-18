@@ -31,6 +31,7 @@ import {
   isNamePart,
   joinMessagePartSegments,
 } from './databricks-message-part-transformers';
+import { SourceLinkPill } from './databricks-message-citation';
 import { MessageError } from './message-error';
 import { MessageOAuthError } from './message-oauth-error';
 import { isCredentialErrorMessage } from '@/lib/oauth-error-utils';
@@ -252,15 +253,9 @@ const PurePreviewMessage = ({
             // Support for citations/annotations
             if (type === 'source-url') {
               return (
-                <a
-                  key={key}
-                  href={part.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-baseline text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                >
-                  <sup className="text-xs">[{part.title || part.url}]</sup>
-                </a>
+                <SourceLinkPill key={key} href={part.url}>
+                  {part.title || part.url}
+                </SourceLinkPill>
               );
             }
 

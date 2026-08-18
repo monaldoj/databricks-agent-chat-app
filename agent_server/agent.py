@@ -325,6 +325,10 @@ def create_agent(mcp_servers: List[MCPServer]) -> Agent:
         model_settings=ModelSettings(
             reasoning=MODEL_PROFILE.reasoning,
             extra_body=MODEL_PROFILE.extra_body,
+            # Left unset, the gateway applies a small default. On GPT-5 that
+            # budget is shared with reasoning, so a medium-effort answer is
+            # often cut off mid-sentence. 32k leaves room for both.
+            max_tokens=32768,
         ),
     )
 
