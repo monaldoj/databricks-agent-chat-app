@@ -49,9 +49,12 @@ export const ActivityIndicator = memo(
   ({
     status,
     lastMessage,
+    embedded = false,
   }: {
     status: ChatStatus;
     lastMessage?: ChatMessage;
+    /** Sit inside the in-progress assistant message, not as a sibling below it. */
+    embedded?: boolean;
   }) => {
     const isActive = status === 'submitted' || status === 'streaming';
     const seconds = useElapsedSeconds(isActive);
@@ -62,20 +65,26 @@ export const ActivityIndicator = memo(
       status === 'submitted' ? 'Thinking' : describeActivity(lastMessage);
     if (label === null) return null;
 
+    const body = (
+      <Shimmer className="flex items-center gap-1.5 text-base">
+        <span>{label}…</span>
+        {seconds >= ELAPSED_VISIBLE_AFTER_SECONDS && (
+          <span className="text-sm tabular-nums">{seconds}s</span>
+        )}
+      </Shimmer>
+    );
+
+    if (embedded) {
+      return <div data-testid="message-assistant-loading">{body}</div>;
+    }
+
     return (
       <div
         data-testid="message-assistant-loading"
         className="group/message w-full"
         data-role="assistant"
       >
-        <div className="flex items-start justify-start gap-3">
-          <Shimmer className="flex items-center gap-1.5">
-            <span>{label}…</span>
-            {seconds >= ELAPSED_VISIBLE_AFTER_SECONDS && (
-              <span className="text-sm tabular-nums">{seconds}s</span>
-            )}
-          </Shimmer>
-        </div>
+        <div className="flex items-start justify-start gap-3">{body}</div>
       </div>
     );
   },

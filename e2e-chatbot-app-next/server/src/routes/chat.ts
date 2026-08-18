@@ -61,7 +61,10 @@ import {
 } from '@chat-template/core';
 import { ChatSDKError } from '@chat-template/core/errors';
 import { storeMessageMeta } from '../lib/message-meta-store';
-import { drainStreamToWriter, fallbackToGenerateText } from '../lib/stream-fallback';
+import {
+  drainStreamToWriter,
+  fallbackToGenerateText,
+} from '../lib/stream-fallback';
 
 export const chatRouter: RouterType = Router();
 
@@ -146,10 +149,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
               (part) => part.type === 'text',
             )?.text;
             if (textFromUserMessage) {
-              const fallback = truncatePreserveWords(
-                textFromUserMessage,
-                128,
-              );
+              const fallback = truncatePreserveWords(textFromUserMessage, 128);
               await updateChatTitleById({ chatId: id, title: fallback });
               return fallback;
             }
@@ -254,7 +254,11 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
       [CONTEXT_HEADER_USER_ID]: session.user.email ?? session.user.id,
       // Forward OBO user token to the backend/serving endpoint
       ...(req.headers['x-forwarded-access-token']
-        ? { 'x-forwarded-access-token': req.headers['x-forwarded-access-token'] as string }
+        ? {
+            'x-forwarded-access-token': req.headers[
+              'x-forwarded-access-token'
+            ] as string,
+          }
         : {}),
     };
 
@@ -315,8 +319,7 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
           sendSources: true,
           sendFinish: false,
           onError: (error) => {
-            const msg =
-              error instanceof Error ? error.message : String(error);
+            const msg = error instanceof Error ? error.message : String(error);
             writer.onError?.(error);
             return msg;
           },
@@ -384,6 +387,10 @@ chatRouter.post('/', requireAuth, async (req: Request, res: Response) => {
     pipeUIMessageStreamToResponse({
       stream,
       response: res,
+      headers: {
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+      },
       consumeSseStream({ stream }) {
         streamCache.storeStream({
           streamId,
@@ -503,7 +510,8 @@ chatRouter.get(
 
     // Set headers for SSE
     res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.setHeader('Connection', 'keep-alive');
 
     // Pipe the cached stream directly to the response
@@ -614,4 +622,3 @@ function truncatePreserveWords(input: string, maxLength: number): string {
 
   return slice.slice(0, lastSpaceIndex);
 }
-

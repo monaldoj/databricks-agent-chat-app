@@ -5,6 +5,11 @@ import {
 } from 'ai';
 import { generateUUID } from '@chat-template/core';
 
+/** Yield so Express can flush SSE between tokens instead of one burst. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 /**
  * Reads all chunks from a UI message stream, forwarding non-error parts to the
  * writer. Returns whether the stream encountered any errors.
@@ -35,12 +40,32 @@ export async function drainStreamToWriter(
           chunk.value.errorText,
         );
         writer.write(chunk.value);
-      } else {
-        if (!receivedTextChunk && chunk.value.type.startsWith('text-')) {
-          receivedTextChunk = true;
-        }
-        writer.write(chunk.value);
+        continue;
       }
+
+      if (!receivedTextChunk && chunk.value.type.startsWith('text-')) {
+        receivedTextChunk = true;
+      }
+
+      // A model that dumps a whole paragraph as one delta still has to
+      // paint word-by-word, or the client sees the answer pop in at once.
+      if (
+        (chunk.value.type === 'text-delta' ||
+          chunk.value.type === 'reasoning-delta') &&
+        typeof chunk.value.delta === 'string' &&
+        chunk.value.delta.length > 40 &&
+        /\s/.test(chunk.value.delta)
+      ) {
+        for (const token of chunk.value.delta.split(/(\s+)/)) {
+          if (token.length > 0) {
+            writer.write({ ...chunk.value, delta: token });
+            await yieldToEventLoop();
+          }
+        }
+        continue;
+      }
+
+      writer.write(chunk.value);
     }
   } catch (readError) {
     if (!receivedTextChunk) {
@@ -53,6 +78,37 @@ export async function drainStreamToWriter(
   }
 
   return { failed: false };
+}
+
+/** Split a generateText string into deltas so the client still paints incrementally. */
+async function writeStreamingText(
+  writer: UIMessageStreamWriter,
+  kind: 'text' | 'reasoning',
+  id: string,
+  text: string,
+) {
+  if (text.length === 0) return;
+
+  if (kind === 'text') {
+    writer.write({ type: 'text-start', id });
+    for (const token of text.split(/(\s+)/)) {
+      if (token.length > 0) {
+        writer.write({ type: 'text-delta', id, delta: token });
+        await yieldToEventLoop();
+      }
+    }
+    writer.write({ type: 'text-end', id });
+    return;
+  }
+
+  writer.write({ type: 'reasoning-start', id });
+  for (const token of text.split(/(\s+)/)) {
+    if (token.length > 0) {
+      writer.write({ type: 'reasoning-delta', id, delta: token });
+      await yieldToEventLoop();
+    }
+  }
+  writer.write({ type: 'reasoning-end', id });
 }
 
 /**
@@ -73,36 +129,7 @@ export async function drainStreamToWriter(
  *   tool-result→ tool-output-available
  *   tool-error, tool-approval-request → ignored (not expected in fallback)
  */
-/** Split a generateText string into deltas so the client still paints incrementally. */
-function writeStreamingText(
-  writer: UIMessageStreamWriter,
-  kind: 'text' | 'reasoning',
-  id: string,
-  text: string,
-) {
-  if (text.length === 0) return;
-
-  if (kind === 'text') {
-    writer.write({ type: 'text-start', id });
-    for (const token of text.split(/(\s+)/)) {
-      if (token.length > 0) {
-        writer.write({ type: 'text-delta', id, delta: token });
-      }
-    }
-    writer.write({ type: 'text-end', id });
-    return;
-  }
-
-  writer.write({ type: 'reasoning-start', id });
-  for (const token of text.split(/(\s+)/)) {
-    if (token.length > 0) {
-      writer.write({ type: 'reasoning-delta', id, delta: token });
-    }
-  }
-  writer.write({ type: 'reasoning-end', id });
-}
-
-function writeGenerateTextResultToStream(
+async function writeGenerateTextResultToStream(
   result: Awaited<ReturnType<typeof generateText>>,
   writer: UIMessageStreamWriter,
 ) {
@@ -111,11 +138,11 @@ function writeGenerateTextResultToStream(
 
     switch (part.type) {
       case 'text': {
-        writeStreamingText(writer, 'text', id, part.text);
+        await writeStreamingText(writer, 'text', id, part.text);
         break;
       }
       case 'reasoning': {
-        writeStreamingText(writer, 'reasoning', id, part.text);
+        await writeStreamingText(writer, 'reasoning', id, part.text);
         break;
       }
       case 'file': {
@@ -197,7 +224,7 @@ export async function fallbackToGenerateText(
       }
     )?.metadata?.trace_id;
 
-    writeGenerateTextResultToStream(fallback, writer);
+    await writeGenerateTextResultToStream(fallback, writer);
 
     return { usage: fallback.usage, traceId };
   } catch (fallbackError) {

@@ -44,6 +44,7 @@ import { GenieResultCard } from './genie-chart';
 import { parseGenieResults, type GenieResultSet } from '@/lib/genie-result';
 import { parseGenieToolName, toolDisplayName } from '@/lib/tool-labels';
 import { useGenieSpaceTitle } from '@/hooks/use-genie-space-title';
+import { ActivityIndicator } from './activity-indicator';
 
 const PurePreviewMessage = ({
   message,
@@ -54,8 +55,8 @@ const PurePreviewMessage = ({
   sendMessage,
   regenerate,
   isReadonly,
-  requiresScrollPadding,
   initialFeedback,
+  activityStatus,
 }: {
   message: ChatMessage;
   allMessages: ChatMessage[];
@@ -65,8 +66,8 @@ const PurePreviewMessage = ({
   sendMessage: UseChatHelpers<ChatMessage>['sendMessage'];
   regenerate: UseChatHelpers<ChatMessage>['regenerate'];
   isReadonly: boolean;
-  requiresScrollPadding: boolean;
   initialFeedback?: Feedback;
+  activityStatus?: UseChatHelpers<ChatMessage>['status'];
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [showErrors, setShowErrors] = useState(false);
@@ -140,7 +141,6 @@ const PurePreviewMessage = ({
         <div
           className={cn('flex min-w-0 flex-col gap-3', {
             'w-full': message.role === 'assistant' || mode === 'edit',
-            'min-h-96': message.role === 'assistant' && requiresScrollPadding,
             'max-w-[70%] sm:max-w-[min(fit-content,80%)]':
               message.role === 'user' && mode !== 'edit',
           })}
@@ -278,6 +278,14 @@ const PurePreviewMessage = ({
             }
           })}
 
+          {activityStatus && (
+            <ActivityIndicator
+              embedded
+              status={activityStatus}
+              lastMessage={message}
+            />
+          )}
+
           {!isReadonly && !hasOnlyErrors && (
             <MessageActions
               key={`action-${message.id}`}
@@ -311,16 +319,13 @@ export const PreviewMessage = memo(
   PurePreviewMessage,
   (prevProps, nextProps) => {
     if (prevProps.isLoading !== nextProps.isLoading) return false;
-    // While streaming, re-render whenever the AI SDK produces a new message
-    // object (each throttled update). We use reference equality rather than
-    // deep-equal on parts because fast-deep-equal short-circuits on identical
-    // references — and the SDK may mutate parts in place during streaming.
-    if (nextProps.isLoading && prevProps.message !== nextProps.message)
-      return false;
+    if (prevProps.activityStatus !== nextProps.activityStatus) return false;
+    // Always re-render the in-progress assistant message. Deep-equal on parts
+    // short-circuits when the SDK mutates the same array, which would freeze
+    // the transcript until the turn ended.
+    if (nextProps.isLoading) return false;
 
     if (prevProps.message.id !== nextProps.message.id) return false;
-    if (prevProps.requiresScrollPadding !== nextProps.requiresScrollPadding)
-      return false;
     if (!equal(prevProps.message.parts, nextProps.message.parts)) return false;
     if (
       prevProps.initialFeedback?.feedbackType !==
@@ -328,7 +333,7 @@ export const PreviewMessage = memo(
     )
       return false;
 
-    return true; // Props are equal, skip re-render
+    return true;
   },
 );
 

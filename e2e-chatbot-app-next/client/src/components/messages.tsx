@@ -37,10 +37,13 @@ function PureMessages({
     endRef: messagesEndRef,
     isAtBottom,
     scrollToBottom,
-    hasSentMessage,
   } = useMessages({
     status,
   });
+
+  const lastMessage = messages[messages.length - 1];
+  const lastIsAssistant = lastMessage?.role === 'assistant';
+  const showActivity = selectedModelId !== 'chat-model-reasoning';
 
   useDataStream();
 
@@ -79,20 +82,19 @@ function PureMessages({
               sendMessage={sendMessage}
               regenerate={regenerate}
               isReadonly={isReadonly}
-              requiresScrollPadding={
-                hasSentMessage && index === messages.length - 1
+              activityStatus={
+                showActivity && lastIsAssistant && index === messages.length - 1
+                  ? status
+                  : undefined
               }
               initialFeedback={feedback[message.id]}
             />
           ))}
 
-          {/* Stays up for the whole turn, not just the wait before the first
-              token, so Genie handoffs never look like a hang. */}
-          {selectedModelId !== 'chat-model-reasoning' && (
-            <ActivityIndicator
-              status={status}
-              lastMessage={messages[messages.length - 1]}
-            />
+          {/* Before the assistant message exists, sit the indicator in the
+              same spot the first token will occupy — just under the question. */}
+          {showActivity && !lastIsAssistant && (
+            <ActivityIndicator status={status} lastMessage={lastMessage} />
           )}
 
           <div

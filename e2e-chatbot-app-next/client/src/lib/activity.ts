@@ -56,7 +56,12 @@ export function describeActivity(
         ? describeTool(part.toolName)
         : 'Thinking';
     }
-    if (part.type === 'text' || part.type === 'reasoning') return 'Thinking';
+    // Text occupies the same slot as the indicator. Hide once it has
+    // started so "Thinking…" is not sitting under the growing answer.
+    if (part.type === 'text') {
+      return part.text?.trim() ? null : 'Thinking';
+    }
+    if (part.type === 'reasoning') return 'Thinking';
   }
 
   return 'Thinking';

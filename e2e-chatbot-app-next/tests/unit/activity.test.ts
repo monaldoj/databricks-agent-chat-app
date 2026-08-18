@@ -86,10 +86,16 @@ test.describe('describeActivity', () => {
     ).toBeNull();
   });
 
-  test('is Thinking while text or reasoning is streaming', () => {
+  test('hides once assistant text is on the page', () => {
     expect(
       describeActivity(assistant([{ type: 'text', text: 'Toronto' }])),
-    ).toBe('Thinking');
+    ).toBeNull();
+    expect(describeActivity(assistant([{ type: 'text', text: '   ' }]))).toBe(
+      'Thinking',
+    );
+  });
+
+  test('is Thinking while reasoning is streaming', () => {
     expect(
       describeActivity(
         assistant([{ type: 'reasoning', text: 'Let me look that up.' }]),

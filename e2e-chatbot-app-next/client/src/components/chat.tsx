@@ -112,7 +112,6 @@ export function Chat({
   } = useChat<ChatMessage>({
     id,
     messages: initialMessages,
-    experimental_throttle: 100,
     generateId: generateUUID,
     resume: id !== undefined && initialMessages.length > 0, // Enable automatic stream resumption
     transport: new ChatTransport({
@@ -235,7 +234,7 @@ export function Chat({
         // Ref: https://github.com/vercel/ai/issues/8477#issuecomment-3603209884
         queueMicrotask(() => {
           resumeStream();
-        })
+        });
       } else {
         // Stream completed normally or we've exhausted resume attempts
         if (resumeAttemptCountRef.current >= maxResumeAttempts) {
@@ -284,19 +283,21 @@ export function Chat({
 
   const [attachments, setAttachments] = useState<Array<Attachment>>([]);
 
-  const inputElement = <MultimodalInput
-    chatId={id}
-    input={input}
-    setInput={setInput}
-    status={status}
-    stop={stop}
-    attachments={attachments}
-    setAttachments={setAttachments}
-    messages={messages}
-    setMessages={setMessages}
-    sendMessage={sendMessage}
-    selectedVisibilityType={visibilityType}
-  />
+  const inputElement = (
+    <MultimodalInput
+      chatId={id}
+      input={input}
+      setInput={setInput}
+      status={status}
+      stop={stop}
+      attachments={attachments}
+      setAttachments={setAttachments}
+      messages={messages}
+      setMessages={setMessages}
+      sendMessage={sendMessage}
+      selectedVisibilityType={visibilityType}
+    />
+  );
 
   if (messages.length === 0) {
     return (
@@ -315,7 +316,10 @@ export function Chat({
   return (
     <>
       <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">
-        <ChatHeader title={displayTitle} isLoadingTitle={titlePending && !displayTitle} />
+        <ChatHeader
+          title={displayTitle}
+          isLoadingTitle={titlePending && !displayTitle}
+        />
 
         <Messages
           status={status}
@@ -329,12 +333,8 @@ export function Chat({
           feedback={feedback}
         />
 
-
-
         <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
-          {!isReadonly && (
-            inputElement
-          )}
+          {!isReadonly && inputElement}
         </div>
       </div>
     </>

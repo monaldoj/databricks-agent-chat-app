@@ -13,6 +13,10 @@ export const Response = memo(
         }}
         className="flex flex-col gap-4"
         {...props}
+        // Streaming mode updates parsed blocks via useTransition, which
+        // defers paints until the turn goes idle — the answer then pops
+        // in all at once. Static mode renders the growing string immediately.
+        mode="static"
       />
     );
   },

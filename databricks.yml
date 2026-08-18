@@ -1,5 +1,5 @@
 bundle:
-  name: responses-agent-chat-app
+  name: databricks-agent-chat-app
 
 # The chat UI is vendored under e2e-chatbot-app-next/ and rebuilt in the app
 # container by `start-app`, so its installed and compiled output stays local.
@@ -82,9 +82,9 @@ resources:
         prevent_destroy: false
 
   apps:
-    responses_agent_chat_app:
+    databricks_agent_chat_app:
       name: ${var.app_name}
-      description: "Responses agent with web search and Genie, with a chat UI"
+      description: "Databricks agent with web search and Genie, with a chat UI"
       source_code_path: ./
       lifecycle:
         started: true
@@ -166,6 +166,11 @@ targets:
   dev:
     mode: development
     default: true
+    # workspace:
+    #   host: https://...
+
+  test:
+    mode: development
     # workspace:
     #   host: https://...
 
