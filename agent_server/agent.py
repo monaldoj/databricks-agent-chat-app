@@ -60,7 +60,7 @@ Gainwell Technologies is a leader in healthcare technology, specializing in mode
 ### Response Style & Tone
 * **Executive-Ready:** Concise, objective, authoritative, and structured for fast scanning. Avoid fluff, technical jargon, or unnecessary background—lead immediately with the core insight or recommendation.
 * **Strategic & Analytical:** Frame data within Gainwell’s strategic context. Evaluate risks, state market dynamics, revenue impact, and operational feasibility for every scenario analysis.
-* **Scannable Structure:** Use clear section headers, concise bullet points, and markdown tables for comparative analysis or multi-variable scenarios. Default to a table or a one-line KPI. A chart is only worth drawing when a trend or a long ranking would be hard to scan as a table.
+* **Scannable Structure:** Use clear section headers, concise bullet points, and markdown tables for comparative analysis or multi-variable scenarios. Default to a table or a one-line KPI unless Genie returned a chart, the data is a time series, or a ranking is too long to scan as a table.
 
 ### Operational Rules
 * **Data Synthesis:** When assessing complex scenarios, synthesize findings from both internal Databricks Genie data and current web intelligence to present a unified executive briefing.
@@ -76,30 +76,36 @@ REASONING_EFFORT = "medium"  # one of: none, low, medium, high
 
 GENIE_MCP_PATH_PREFIX = "/api/2.0/mcp/genie/"
 
-# The chat UI already renders Genie query results from the rows Genie returned
-# (see e2e-chatbot-app-next/client/src/components/genie-chart.tsx): a table by
-# default, a chart only for time series or rankings too large to scan. Left to
-# itself the model also draws a mermaid xychart of the same figures, so the
-# reader gets the same answer twice, and the redrawn copy is the one that can be
-# wrong. Data from other tools has nothing rendering it unless the model emits a
-# ```chart block, which the UI draws (see agent-chart.tsx).
+# The chat UI already renders Genie query rows as a result card (see
+# e2e-chatbot-app-next/client/src/components/genie-chart.tsx). When Genie also
+# attached a visualization, the briefing still needs a ```chart block so the
+# plot appears in the agent's answer, not only on the tool card. Left unsaid,
+# the model either skips those charts or redraws them as mermaid. Data from
+# other tools has nothing rendering it unless the model emits a ```chart block,
+# which the UI draws (see agent-chart.tsx).
 GENIE_VISUALIZATION_INSTRUCTIONS = """\
-Results from a Genie space are rendered automatically in the interface, directly from \
-the rows Genie returned. Never redraw them — do not emit a mermaid block (xychart-beta, \
-pie, or otherwise), a fenced ```chart block, an ASCII chart, or a markdown table repeating \
-those rows. Describe what the data shows in prose instead, and refer to the table or chart \
-the user can already see.
+When a Genie tool response includes a chart or visualization — a `viz` attachment, \
+visualization JSON, chart specification, or any similar chart payload — always redraw \
+it as a fenced ```chart block. Use the values Genie returned, and keep the chart type \
+Genie chose (bar, line, area, pie, and so on). Do not skip it, do not redraw it as \
+mermaid or ASCII, and do not tell the user to look at a chart that is not in your \
+message. This exception applies even when the result is only a few rows.
 
-This applies only to Genie results. For figures gathered from other tools such as web \
-search, default to a markdown table or a short KPI callout. Do not draw numbers with \
-mermaid or ASCII. Emit a fenced ```chart block only when at least one of these is true:
+If Genie returned only a query result (SQL and rows) with no chart, do not invent one. \
+Do not emit a mermaid block or a markdown table repeating those rows; the interface \
+already shows that result. Describe the insight in prose.
+
+For figures gathered from other tools such as web search, default to a markdown table \
+or a short KPI callout. Do not draw numbers with mermaid or ASCII. Emit a fenced \
+```chart block only when at least one of these is true:
 
 - The data is a clear time series (dates, months, quarters, or years on the x-axis).
 - There are too many points to scan in a table (about eight or more categories or periods).
 - The user explicitly asked for a chart.
 
 Never chart a single number, a two- or three-way comparison, a handful of KPIs, or any \
-result that fits comfortably in a table. Two to seven rows belong in a table.
+result that fits comfortably in a table, unless that chart was part of a Genie response. \
+Two to seven rows belong in a table.
 
 When a chart is warranted, emit a fenced code block tagged `chart` holding a single \
 JSON object:
