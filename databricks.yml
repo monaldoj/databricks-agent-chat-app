@@ -3,7 +3,11 @@ bundle:
 
 # The chat UI is vendored under e2e-chatbot-app-next/ and rebuilt in the app
 # container by `start-app`, so its installed and compiled output stays local.
+# ui-branding/ is gitignored so logos stay off git; include it so a deploy
+# from this machine still ships the local greeting override.
 sync:
+  include:
+    - ui-branding
   exclude:
     - "**/node_modules"
     - "**/dist"

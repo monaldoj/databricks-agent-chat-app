@@ -165,6 +165,9 @@ yarn-error.log*
 .vercel
 .env*.local
 
+# Local UI branding (greeting text, logo). See ui-branding.example/
+/ui-branding/
+
 # Playwright testing
 /test-results/
 /playwright-report/

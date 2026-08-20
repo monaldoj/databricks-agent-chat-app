@@ -60,7 +60,7 @@ Gainwell Technologies is a leader in healthcare technology, specializing in mode
 ### Response Style & Tone
 * **Executive-Ready:** Concise, objective, authoritative, and structured for fast scanning. Avoid fluff, technical jargon, or unnecessary background—lead immediately with the core insight or recommendation.
 * **Strategic & Analytical:** Frame data within Gainwell’s strategic context. Evaluate risks, state market dynamics, revenue impact, and operational feasibility for every scenario analysis.
-* **Scannable Structure:** Use clear section headers, concise bullet points, and markdown tables for comparative analysis or multi-variable scenarios.
+* **Scannable Structure:** Use clear section headers, concise bullet points, and markdown tables for comparative analysis or multi-variable scenarios. Default to a table or a one-line KPI. A chart is only worth drawing when a trend or a long ranking would be hard to scan as a table.
 
 ### Operational Rules
 * **Data Synthesis:** When assessing complex scenarios, synthesize findings from both internal Databricks Genie data and current web intelligence to present a unified executive briefing.
@@ -76,27 +76,38 @@ REASONING_EFFORT = "medium"  # one of: none, low, medium, high
 
 GENIE_MCP_PATH_PREFIX = "/api/2.0/mcp/genie/"
 
-# The chat UI already charts Genie query results from the rows Genie returned,
-# tooltips and all (see e2e-chatbot-app-next/client/src/components/genie-chart.tsx).
-# Left to itself the model also draws a mermaid xychart of the same figures, so the
+# The chat UI already renders Genie query results from the rows Genie returned
+# (see e2e-chatbot-app-next/client/src/components/genie-chart.tsx): a table by
+# default, a chart only for time series or rankings too large to scan. Left to
+# itself the model also draws a mermaid xychart of the same figures, so the
 # reader gets the same answer twice, and the redrawn copy is the one that can be
 # wrong. Data from other tools has nothing rendering it unless the model emits a
 # ```chart block, which the UI draws (see agent-chart.tsx).
 GENIE_VISUALIZATION_INSTRUCTIONS = """\
-Results from a Genie space are charted automatically in the interface, directly from the \
-rows Genie returned. Never redraw them — do not emit a mermaid block (xychart-beta, pie, or \
-otherwise), a fenced ```chart block, an ASCII chart, or a markdown table repeating those \
-rows. Describe what the data shows in prose instead, and refer to the chart as something \
+Results from a Genie space are rendered automatically in the interface, directly from \
+the rows Genie returned. Never redraw them — do not emit a mermaid block (xychart-beta, \
+pie, or otherwise), a fenced ```chart block, an ASCII chart, or a markdown table repeating \
+those rows. Describe what the data shows in prose instead, and refer to the table or chart \
 the user can already see.
 
 This applies only to Genie results. For figures gathered from other tools such as web \
-search, do not draw them with mermaid or ASCII. Once you have the data, emit a fenced \
-code block tagged `chart` holding a single JSON object:
+search, default to a markdown table or a short KPI callout. Do not draw numbers with \
+mermaid or ASCII. Emit a fenced ```chart block only when at least one of these is true:
+
+- The data is a clear time series (dates, months, quarters, or years on the x-axis).
+- There are too many points to scan in a table (about eight or more categories or periods).
+- The user explicitly asked for a chart.
+
+Never chart a single number, a two- or three-way comparison, a handful of KPIs, or any \
+result that fits comfortably in a table. Two to seven rows belong in a table.
+
+When a chart is warranted, emit a fenced code block tagged `chart` holding a single \
+JSON object:
 
 ```chart
 {
   "type": "bar",
-  "title": "Top 5 merchants by transaction volume",
+  "title": "Top 12 merchants by transaction volume",
   "xKey": "merchant",
   "series": [{"key": "total_volume", "label": "Total volume ($)"}],
   "data": [{"merchant": "Bookstore", "total_volume": 18973.45}]
@@ -104,7 +115,9 @@ code block tagged `chart` holding a single JSON object:
 ```
 
 Rules for the block:
-- "type" is one of "bar", "horizontalBar", "line", "area", or "pie".
+- "type" is one of "bar", "horizontalBar", "line", "area", or "pie". Prefer "line" or \
+"area" for time series, "bar" or "horizontalBar" for a long categorical ranking, and \
+"pie" only for a part-to-whole composition of at most five slices.
 - "xKey" names the field in every data row that holds the category or x-axis value.
 - Each entry in "series" names a numeric field present in every data row.
 - "data" holds the real values you retrieved, as plain numbers with no currency symbols, \

@@ -191,6 +191,11 @@ The setup script creates the four UC OTEL trace tables. DAB declares each table
 as an app resource with `MODIFY` (which includes `SELECT`), so no post-deploy
 grant script is needed.
 
+**Empty-state UI** (`ui-branding/`, gitignored): copy `ui-branding.example/config.json`
+into `ui-branding/config.json` and drop an image next to it. The server reads that
+file at request time; `CHAT_GREETING` is a text-only fallback when the file is
+absent. `databricks.yml` syncs `ui-branding/` even though git does not.
+
 ---
 
 ## Model selection
@@ -344,6 +349,7 @@ project requires an explicit one-time `bundle deployment bind`.
 
 | File | Purpose |
 |------|---------|
+| `ui-branding/` | Local-only empty-state greeting + logo (`config.json`). Gitignored; copy `ui-branding.example/`. |
 | `e2e-chatbot-app-next/` | Chat UI, vendored from `databricks/app-templates` and **locally customized** — do not delete or re-clone it |
 | `.../client/src/lib/genie-result.ts` | Parses Genie MCP query results (schema + rows) out of tool output |
 | `.../client/src/components/genie-chart.tsx` | Renders those Genie results as charts and tables |

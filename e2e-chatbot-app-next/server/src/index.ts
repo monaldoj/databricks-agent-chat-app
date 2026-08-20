@@ -17,8 +17,10 @@ import { historyRouter } from './routes/history';
 import { sessionRouter } from './routes/session';
 import { messagesRouter } from './routes/messages';
 import { configRouter } from './routes/config';
+import { uiBrandingRouter } from './routes/ui-branding';
 import { feedbackRouter } from './routes/feedback';
 import { genieRouter } from './routes/genie';
+import { resolveBrandingDir } from './lib/ui-branding';
 import { ChatSDKError } from '@chat-template/core/errors';
 
 // ESM-compatible __dirname
@@ -57,6 +59,7 @@ app.use('/api/history', historyRouter);
 app.use('/api/session', sessionRouter);
 app.use('/api/messages', messagesRouter);
 app.use('/api/config', configRouter);
+app.use('/api/ui-branding', uiBrandingRouter);
 app.use('/api/feedback', feedbackRouter);
 app.use('/api/genie', genieRouter);
 
@@ -235,6 +238,10 @@ async function startServer() {
   app.listen(PORT, () => {
     console.log(`Backend server is running on http://localhost:${PORT}`);
     console.log(`Environment: ${isDevelopment ? 'development' : 'production'}`);
+    const brandingDir = resolveBrandingDir();
+    if (brandingDir) {
+      console.log(`UI branding loaded from ${brandingDir}`);
+    }
   });
 }
 

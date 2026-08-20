@@ -177,16 +177,31 @@ test.describe('buildChartSpec', () => {
     expect(spec?.axisColumn.name).toBe('txn_date');
   });
 
+  test('leaves a short categorical ranking as a table', () => {
+    const rows = [
+      ['Toronto', '421'],
+      ['Seattle', '420'],
+      ['Paris', '419'],
+      ['Chicago', '416'],
+      ['Boston', '413'],
+      ['London', '410'],
+      ['New York', '400'],
+    ];
+    const [result] = parseGenieResults(genieResponse(CITY_COLUMNS, rows));
+    expect(buildChartSpec(result)).toBeNull();
+  });
+
   test('groups several measures into one chart', () => {
     const columns = [
       { name: 'txn_city', type_name: 'STRING' },
       { name: 'swipe_count', type_name: 'LONG' },
       { name: 'total_amount', type_name: 'DECIMAL' },
     ];
-    const rows = [
-      ['Toronto', '421', '10500.25'],
-      ['Seattle', '420', '9800.00'],
-    ];
+    const rows = CITY_ROWS.map(([city, swipes], index) => [
+      city,
+      swipes,
+      String(10000 - index * 100),
+    ]);
     const [result] = parseGenieResults(genieResponse(columns, rows));
 
     expect(
@@ -200,11 +215,11 @@ test.describe('buildChartSpec', () => {
       { name: 'avg_amount_usd', type_name: 'DOUBLE' },
       { name: 'rank', type_name: 'INT' },
     ];
-    const rows = [
-      ['Retail', '45.17', '1'],
-      ['Dining', '43.19', '2'],
-      ['E-commerce', '41.20', '3'],
-    ];
+    const rows = CITY_ROWS.map(([city, swipes], index) => [
+      city,
+      String(Number(swipes) / 10),
+      String(index + 1),
+    ]);
     const [result] = parseGenieResults(genieResponse(columns, rows));
 
     expect(
@@ -219,10 +234,11 @@ test.describe('buildChartSpec', () => {
       { name: 'merchant_id', type_name: 'LONG' },
       { name: 'swipe_count', type_name: 'LONG' },
     ];
-    const rows = [
-      ['Toronto', '9001', '421'],
-      ['Seattle', '9002', '420'],
-    ];
+    const rows = CITY_ROWS.map(([city, swipes], index) => [
+      city,
+      String(9000 + index),
+      swipes,
+    ]);
     const [result] = parseGenieResults(genieResponse(columns, rows));
 
     expect(
@@ -236,10 +252,11 @@ test.describe('buildChartSpec', () => {
       { name: 'identified_frauds', type_name: 'LONG' },
       { name: 'rank_change', type_name: 'LONG' },
     ];
-    const rows = [
-      ['Toronto', '12', '3'],
-      ['Seattle', '9', '1'],
-    ];
+    const rows = CITY_ROWS.map(([city, swipes], index) => [
+      city,
+      swipes,
+      String(index),
+    ]);
     const [result] = parseGenieResults(genieResponse(columns, rows));
 
     expect(

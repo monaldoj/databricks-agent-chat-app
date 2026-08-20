@@ -6,6 +6,7 @@ import {
 } from 'express';
 import { isDatabaseAvailable } from '@chat-template/db';
 import { getEndpointOboInfo } from '@chat-template/ai-sdk-providers';
+import { brandingAssetUrl, loadUiBranding } from '../lib/ui-branding';
 
 export const configRouter: RouterType = Router();
 
@@ -28,8 +29,8 @@ function getScopesFromToken(token: string): string[] {
 
 /**
  * GET /api/config - Get application configuration
- * Returns feature flags, the empty-state greeting, and OBO status based on
- * environment configuration.
+ * Returns feature flags, the empty-state greeting (and optional hero image),
+ * and OBO status based on environment and ui-branding/config.json.
  * If the user's OBO token is present, decodes it to check which required
  * scopes are missing — the banner only shows missing scopes.
  */
@@ -50,12 +51,27 @@ configRouter.get('/', async (req: Request, res: Response) => {
     });
   }
 
+  const branding = loadUiBranding();
+  const greeting =
+    branding?.config.greeting !== undefined
+      ? branding.config.greeting
+      : process.env.CHAT_GREETING || undefined;
+  const greetingImage = branding?.config.greetingImage
+    ? {
+        url: brandingAssetUrl(branding.config.greetingImage.file),
+        alt: branding.config.greetingImage.alt,
+        maxWidth: branding.config.greetingImage.maxWidth,
+        maxHeight: branding.config.greetingImage.maxHeight,
+      }
+    : undefined;
+
   res.json({
     features: {
       chatHistory: isDatabaseAvailable(),
       feedback: !!process.env.MLFLOW_EXPERIMENT_ID,
     },
-    greeting: process.env.CHAT_GREETING || undefined,
+    greeting,
+    greetingImage,
     obo: {
       missingScopes,
     },

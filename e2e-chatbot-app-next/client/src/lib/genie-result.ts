@@ -231,6 +231,12 @@ export type GenieChartSpec = {
 
 /** Beyond this a vertical bar chart stops being legible, so bars go sideways. */
 const HORIZONTAL_THRESHOLD = 12;
+/**
+ * Fewer categorical points than this are easier to read as a table than as
+ * bars. Time series still chart below this — a three-month trend is a line,
+ * a three-city comparison is a table.
+ */
+const MIN_CATEGORICAL_ROWS = 8;
 /** The palette repeats past this, and the legend stops being readable. */
 const MAX_SERIES = 6;
 
@@ -256,6 +262,9 @@ const isIndexLikeColumn = (column: GenieColumn): boolean =>
  * Genie's API exposes no chart type, so the shape is inferred from the column
  * schema and names alone. Row order is never changed — Genie's ORDER BY is the
  * intended ordering and re-sorting here would misrepresent the answer.
+ *
+ * Charts are reserved for time series and for categorical rankings too large
+ * to scan as a table. A handful of cities, states, or KPIs stays tabular.
  */
 export function buildChartSpec(result: GenieResultSet): GenieChartSpec | null {
   // One row is a single fact, better read as a table than plotted.
@@ -283,6 +292,11 @@ export function buildChartSpec(result: GenieResultSet): GenieChartSpec | null {
       series.some(({ columnIndex }) => toNumber(result.rows[index][columnIndex]) !== null),
     );
   if (rowIndices.length < 2) return null;
+
+  // A short categorical ranking is a table. Time series still chart.
+  if (temporalIndex < 0 && rowIndices.length < MIN_CATEGORICAL_ROWS) {
+    return null;
+  }
 
   const type: GenieChartType =
     temporalIndex >= 0

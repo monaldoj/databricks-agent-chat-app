@@ -53,6 +53,7 @@ test.describe('/api/config', () => {
     const data = await response.json();
 
     expect(data.greeting).toBeUndefined();
+    expect(data.greetingImage).toBeUndefined();
   });
 
   test('GET /api/config returns OBO info', async ({

@@ -1,0 +1,9 @@
+{
+  "greeting": "What would you like to know?",
+  "greetingImage": {
+    "file": "logo.png",
+    "alt": "App logo",
+    "maxWidth": "22rem",
+    "maxHeight": "6rem"
+  }
+}

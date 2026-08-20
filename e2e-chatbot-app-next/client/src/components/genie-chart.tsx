@@ -422,9 +422,9 @@ function GenieTable({ result }: { result: GenieResultSet }) {
 /**
  * One Genie query result, drawn from the rows Genie itself returned.
  *
- * Genie's API carries no chart specification, so the chart type is inferred
- * from the column schema. The values, their order, and the column names are
- * reproduced exactly as Genie sent them.
+ * Genie's API carries no chart specification, so a chart is inferred only for
+ * time series or rankings too large to scan as a table. The values, their
+ * order, and the column names are reproduced exactly as Genie sent them.
  */
 export const GenieResultCard = memo(({ result }: { result: GenieResultSet }) => {
   const spec = useMemo(() => buildChartSpec(result), [result]);

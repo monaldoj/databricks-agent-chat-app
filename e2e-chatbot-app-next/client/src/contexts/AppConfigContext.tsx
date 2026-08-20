@@ -4,12 +4,20 @@ import { fetcher } from '@/lib/utils';
 
 export const DEFAULT_GREETING = 'What would you like to know?';
 
+export interface GreetingImage {
+  url: string;
+  alt?: string;
+  maxWidth?: string;
+  maxHeight?: string;
+}
+
 interface ConfigResponse {
   features: {
     chatHistory: boolean;
     feedback: boolean;
   };
   greeting?: string;
+  greetingImage?: GreetingImage;
   obo?: {
     missingScopes: string[];
   };
@@ -22,6 +30,7 @@ interface AppConfigContextType {
   chatHistoryEnabled: boolean;
   feedbackEnabled: boolean;
   greeting: string;
+  greetingImage: GreetingImage | undefined;
   oboMissingScopes: string[];
 }
 
@@ -49,6 +58,7 @@ export function AppConfigProvider({ children }: { children: ReactNode }) {
     chatHistoryEnabled: data?.features.chatHistory ?? true,
     feedbackEnabled: data?.features.feedback ?? false,
     greeting: data?.greeting ?? DEFAULT_GREETING,
+    greetingImage: data?.greetingImage,
     oboMissingScopes: data?.obo?.missingScopes ?? [],
   };
 
