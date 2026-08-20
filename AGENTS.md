@@ -223,20 +223,23 @@ should survive redeploys. `databricks apps get <app-name>` shows the `AGENT_MODE
 app is running with.
 
 **The gateway is OpenAI-compatible, not uniform**, and swapping a model without
-accounting for that is what breaks. `model_profile()` in `agent_server/agent.py` holds the
+accounting for that is what breaks. `model_profile()` in `agent_server/model_profile.py` holds the
 differences, all verified against the gateway:
 
 | | GPT | Claude | Gemini | Llama, Kimi, GLM, GPT-OSS |
 |---|---|---|---|---|
 | API | Responses | chat completions | chat completions | chat completions |
 | Reasoning | `reasoning.effort` (no `minimal`) | `thinking.type: adaptive` + `output_config.effort` (no `none`; `xhigh`/`max` also valid) | `reasoning_effort` (no `none`) | none assumed |
-| Hosted web search | yes | no | no | no |
+| Hosted web search | Responses `web_search` tool | no | Chat Completions `google_search` extra body | no |
 
 Only GPT models accept the Responses API — everything else answers `/responses` with
-"Responses API passthrough is not supported for model ...". Hosted tools such as web
-search exist only there, so on any other model the agent runs with its MCP tools alone
-and is told it has no web search. Reasoning effort is validated at import: a value the
-selected family rejects raises rather than failing on the first request.
+"Responses API passthrough is not supported for model ...". OpenAI hosted web search
+exists only on that path (`WebSearchTool`). Gemini gets Databricks-hosted Google Search
+as a Chat Completions extra-body field (`google_search: {}`); see
+https://docs.databricks.com/aws/en/machine-learning/model-serving/web-search .
+Claude and open-weight models run with MCP tools alone and are told they have no web
+search. Reasoning effort is validated at import: a value the selected family rejects
+raises rather than failing on the first request.
 
 Two Gemini quirks are absorbed by `GatewayOpenAI` and `GatewayChatCompletionsModel` in
 `agent_server/utils.py`, so nothing else has to know about them. Google returns `content`
@@ -345,6 +348,7 @@ project requires an explicit one-time `bundle deployment bind`.
 | `.../client/src/lib/genie-result.ts` | Parses Genie MCP query results (schema + rows) out of tool output |
 | `.../client/src/components/genie-chart.tsx` | Renders those Genie results as charts and tables |
 | `agent_server/agent.py` | Agent logic, model, instructions, MCP servers (Genie spaces come from `GENIE_SPACE_IDS`) |
+| `agent_server/model_profile.py` | Per-family API, reasoning, hosted web search, and max_tokens |
 | `agent_server/start_server.py` | FastAPI server + MLflow setup |
 | `agent_server/evaluate_agent.py` | Agent evaluation with MLflow scorers |
 | `databricks.yml` | Bundle config & resource permissions |

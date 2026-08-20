@@ -2,9 +2,8 @@
 import logging
 import os
 import re
-from dataclasses import dataclass
 from agents.mcp import MCPServer, MCPServerManager
-from typing import Any, AsyncGenerator, List, Literal
+from typing import AsyncGenerator, List
 
 import mlflow
 from agents import (
@@ -18,7 +17,6 @@ from agents import (
 )
 from agents.tracing import set_trace_processors
 from databricks_openai.agents import McpServer
-from openai.types.shared import Reasoning
 from mlflow.genai.agent_server import invoke, stream
 from mlflow.types.responses import (
     ResponsesAgentRequest,
@@ -26,7 +24,7 @@ from mlflow.types.responses import (
     ResponsesAgentStreamEvent,
 )
 
-from agent_server.model_limits import max_output_tokens_for
+from agent_server.model_profile import ModelProfile, model_family, model_profile
 from agent_server.utils import (
     GatewayChatCompletionsModel,
     GatewayOpenAI,
@@ -124,52 +122,18 @@ If a Genie tool reports that a query is still processing, call its poll tool aga
 conversation and message ids the tool returned, until the query reaches a completed state. \
 Never answer by telling the user to wait or to poll for the result themselves."""
 
-# Said only to models that cannot be given the hosted web search tool, so they don't
+# Said only to models that cannot be given hosted web search, so they don't
 # offer to look something up and then answer from memory as if they had.
 NO_WEB_SEARCH_INSTRUCTIONS = """\
 You have no web search tool. Answer from the tools you do have and your own knowledge, \
 and say so plainly when a question needs current information you cannot look up."""
 
-
-@dataclass(frozen=True)
-class ModelProfile:
-    """How one model family has to be addressed through the gateway.
-
-    The gateway speaks OpenAI's API for every model, but not every model accepts every
-    part of it, and the differences are what break a bare model swap:
-
-    * Only OpenAI GPT models accept the Responses API. Anthropic and Google models —
-      and the open-weight endpoints, GPT-OSS included — answer any request to
-      `/responses` with "Responses API passthrough is not supported for model ...",
-      so they have to go through `/chat/completions`.
-    * Reasoning is named differently per provider. GPT takes `reasoning.effort`,
-      Gemini takes `reasoning_effort` (and rejects "none"), and Claude takes neither:
-      it wants Anthropic's adaptive thinking plus a separate `output_config.effort`.
-    * Hosted tools such as web search only exist on the Responses API. Chat
-      completions rejects any tool that isn't a function.
-    """
-
-    api: Literal["responses", "chat_completions"]
-    reasoning: Reasoning | None
-    # Provider-native request fields the OpenAI SDK has no parameter for. They have to
-    # ride in the request body: passed as keyword arguments the SDK rejects them.
-    extra_body: dict[str, Any] | None
-    hosted_tools: bool
-    max_tokens: int
-
-
-# Efforts each family accepts, and what a value the family rejects is sent as instead.
-# GPT has no "minimal" on the Responses API; Gemini has no "none", so the lightest
-# thinking level it does take stands in for it.
-_GPT_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
-_GEMINI_EFFORTS = {
-    "none": "minimal",
-    "minimal": "minimal",
-    "low": "low",
-    "medium": "medium",
-    "high": "high",
-}
-_CLAUDE_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+# Gemini's search is a request parameter, not a function tool, so the model is
+# never shown a tool schema. Say explicitly that live web search is available.
+GEMINI_WEB_SEARCH_INSTRUCTIONS = """\
+You can search the live web through Google Search for current events, recent data, \
+and anything that is not in your training data. Use it whenever a question needs \
+up-to-date information, and cite the sources you find."""
 
 
 def configured_model() -> str:
@@ -182,96 +146,22 @@ def configured_model() -> str:
     return os.getenv("AGENT_MODEL", "").strip() or MODEL
 
 
-def model_family(model: str) -> Literal["gpt", "claude", "gemini", "other"]:
-    """Provider family behind a gateway model name.
-
-    Both naming schemes reach the same model and are reduced to the same bare name, so
-    `system.ai.gpt-5-6-sol` and `databricks-gpt-5-6-sol` are read alike.
-    """
-    name = model.rsplit(".", 1)[-1].removeprefix("databricks-").lower()
-    if name.startswith("gpt-oss"):
-        return "other"  # open weights, and not on the Responses API
-    if name.startswith("gpt-"):
-        return "gpt"
-    if "claude" in name:
-        return "claude"
-    if "gemini" in name:
-        return "gemini"
-    return "other"
-
-
-def model_profile(model: str, effort: str) -> ModelProfile:
-    family = model_family(model)
-
-    if family == "gpt":
-        if effort not in _GPT_EFFORTS:
-            raise ValueError(
-                f"Reasoning effort {effort!r} is not accepted for {model}; "
-                f"use one of {sorted(_GPT_EFFORTS)}."
-            )
-        return ModelProfile(
-            api="responses",
-            reasoning=Reasoning(effort=effort),
-            extra_body=None,
-            hosted_tools=True,
-            max_tokens=max_output_tokens_for(model),
-        )
-
-    if family == "claude":
-        # Anthropic decides per turn whether to think, and takes the effort separately.
-        if effort == "none":
-            thinking: dict[str, Any] = {"thinking": {"type": "disabled"}}
-        elif effort in _CLAUDE_EFFORTS:
-            thinking = {
-                "thinking": {"type": "adaptive"},
-                "output_config": {"effort": effort},
-            }
-        else:
-            raise ValueError(
-                f"Reasoning effort {effort!r} is not accepted for {model}; "
-                f"use 'none' or one of {sorted(_CLAUDE_EFFORTS)}."
-            )
-        return ModelProfile(
-            api="chat_completions",
-            reasoning=None,
-            extra_body=thinking,
-            hosted_tools=False,
-            max_tokens=max_output_tokens_for(model),
-        )
-
-    if family == "gemini":
-        if effort not in _GEMINI_EFFORTS:
-            raise ValueError(
-                f"Reasoning effort {effort!r} is not accepted for {model}; "
-                f"use one of {sorted(_GEMINI_EFFORTS)}."
-            )
-        # The agents SDK sends ModelSettings.reasoning.effort as `reasoning_effort` on
-        # the chat completions path, which is the field Gemini wants.
-        return ModelProfile(
-            api="chat_completions",
-            reasoning=Reasoning(effort=_GEMINI_EFFORTS[effort]),
-            extra_body=None,
-            hosted_tools=False,
-            max_tokens=max_output_tokens_for(model),
-        )
-
-    # Llama, Kimi, GLM, Qwen, GPT-OSS and the like: chat completions, and no reasoning
-    # control that is safe to assume across them.
-    return ModelProfile(
-        api="chat_completions",
-        reasoning=None,
-        extra_body=None,
-        hosted_tools=False,
-        max_tokens=max_output_tokens_for(model),
-    )
-
-
 SELECTED_MODEL = configured_model()
 MODEL_PROFILE = model_profile(SELECTED_MODEL, REASONING_EFFORT)
 
+_web_search_instructions = {
+    "google": [GEMINI_WEB_SEARCH_INSTRUCTIONS],
+    "openai": [],
+    None: [NO_WEB_SEARCH_INSTRUCTIONS],
+}[MODEL_PROFILE.web_search]
+
 INSTRUCTIONS = "\n\n".join(
-    [SYSTEM_PROMPT, GENIE_VISUALIZATION_INSTRUCTIONS, GENIE_PENDING_INSTRUCTIONS]
-    + ([] if MODEL_PROFILE.hosted_tools else [NO_WEB_SEARCH_INSTRUCTIONS])
+    [
+        SYSTEM_PROMPT,
+        GENIE_VISUALIZATION_INSTRUCTIONS,
+        GENIE_PENDING_INSTRUCTIONS,
+        *_web_search_instructions,
+    ]
 )
 
 logging.info(
@@ -279,7 +169,7 @@ logging.info(
     SELECTED_MODEL,
     model_family(SELECTED_MODEL),
     MODEL_PROFILE.api,
-    "on" if MODEL_PROFILE.hosted_tools else "off",
+    MODEL_PROFILE.web_search or "off",
     MODEL_PROFILE.max_tokens,
 )
 
@@ -344,9 +234,10 @@ def create_agent(mcp_servers: List[MCPServer]) -> Agent:
         instructions=INSTRUCTIONS,
         model=build_model(MODEL_PROFILE),
         mcp_servers=mcp_servers,
-        # Genie and other MCP tools reach every model, since they are sent as plain
-        # function tools. Hosted web search only exists on the Responses API.
-        tools=[WebSearchTool()] if MODEL_PROFILE.hosted_tools else [],
+        # Genie and other MCP tools reach every model, since they are sent as
+        # plain function tools. OpenAI hosted web search is a Responses tool;
+        # Gemini's is the google_search extra-body field on chat completions.
+        tools=[WebSearchTool()] if MODEL_PROFILE.web_search == "openai" else [],
         model_settings=ModelSettings(
             reasoning=MODEL_PROFILE.reasoning,
             extra_body=MODEL_PROFILE.extra_body,
