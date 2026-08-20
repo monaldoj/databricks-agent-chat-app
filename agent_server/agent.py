@@ -26,6 +26,7 @@ from mlflow.types.responses import (
     ResponsesAgentStreamEvent,
 )
 
+from agent_server.model_limits import max_output_tokens_for
 from agent_server.utils import (
     GatewayChatCompletionsModel,
     GatewayOpenAI,
@@ -49,7 +50,25 @@ mlflow.openai.autolog()
 # GENERATED
 
 NAME = 'agent-web-search-genie'
-SYSTEM_PROMPT = 'You are a helpful assistant.'
+SYSTEM_PROMPT = """
+You are Gainwell Executive Intelligence, an elite AI advisor tailored exclusively for the C-suite of Gainwell Technologies. Your mission is to assist executive leadership in making high-stakes, data-driven decisions by delivering precise, strategic, and actionable insights. 
+
+Gainwell Technologies is a leader in healthcare technology, specializing in modernizing and managing Medicaid, Medicare, and public health programs for state and federal government agencies. Your responses must reflect a deep understanding of public sector healthcare, Medicaid Management Information Systems (MMIS), claims processing, health and human services (HHS) operations, and cloud modernization.
+
+### Core Capabilities
+1. **Internal Databricks Genie Integration:** You have access to Gainwell's internal Databricks Genie Agents. Query these tools to pull real-time enterprise data, operational metrics, claims analytics, and performance benchmarks. Always prioritize internal telemetry for company-specific scenarios.
+2. **Open Internet Intelligence:** Query external tools to fetch the latest industry news, CMS (Centers for Medicare & Medicaid Services) policy updates, state regulatory shifts, competitor movements, and macro healthcare trends.
+
+### Response Style & Tone
+* **Executive-Ready:** Concise, objective, authoritative, and structured for fast scanning. Avoid fluff, technical jargon, or unnecessary background—lead immediately with the core insight or recommendation.
+* **Strategic & Analytical:** Frame data within Gainwell’s strategic context. Evaluate risks, state market dynamics, revenue impact, and operational feasibility for every scenario analysis.
+* **Scannable Structure:** Use clear section headers, concise bullet points, and markdown tables for comparative analysis or multi-variable scenarios.
+
+### Operational Rules
+* **Data Synthesis:** When assessing complex scenarios, synthesize findings from both internal Databricks Genie data and current web intelligence to present a unified executive briefing.
+* **Source Transparency:** Clearly distinguish between internal Databricks enterprise data and external web sources so executives know the origin of the intelligence.
+* **Handling Uncertainty:** If internal data or web sources are inconclusive, state the limitation clearly, outline the safest assumptions, and propose next steps or data points needed to resolve the gap.
+"""
 MODEL = 'system.ai.gpt-5-6-terra'
 MCP_SERVERS = []
 
@@ -136,6 +155,7 @@ class ModelProfile:
     # ride in the request body: passed as keyword arguments the SDK rejects them.
     extra_body: dict[str, Any] | None
     hosted_tools: bool
+    max_tokens: int
 
 
 # Efforts each family accepts, and what a value the family rejects is sent as instead.
@@ -194,6 +214,7 @@ def model_profile(model: str, effort: str) -> ModelProfile:
             reasoning=Reasoning(effort=effort),
             extra_body=None,
             hosted_tools=True,
+            max_tokens=max_output_tokens_for(model),
         )
 
     if family == "claude":
@@ -215,6 +236,7 @@ def model_profile(model: str, effort: str) -> ModelProfile:
             reasoning=None,
             extra_body=thinking,
             hosted_tools=False,
+            max_tokens=max_output_tokens_for(model),
         )
 
     if family == "gemini":
@@ -230,6 +252,7 @@ def model_profile(model: str, effort: str) -> ModelProfile:
             reasoning=Reasoning(effort=_GEMINI_EFFORTS[effort]),
             extra_body=None,
             hosted_tools=False,
+            max_tokens=max_output_tokens_for(model),
         )
 
     # Llama, Kimi, GLM, Qwen, GPT-OSS and the like: chat completions, and no reasoning
@@ -239,6 +262,7 @@ def model_profile(model: str, effort: str) -> ModelProfile:
         reasoning=None,
         extra_body=None,
         hosted_tools=False,
+        max_tokens=max_output_tokens_for(model),
     )
 
 
@@ -251,11 +275,12 @@ INSTRUCTIONS = "\n\n".join(
 )
 
 logging.info(
-    "Agent model %s (%s) via %s, web search %s",
+    "Agent model %s (%s) via %s, web search %s, max_tokens %s",
     SELECTED_MODEL,
     model_family(SELECTED_MODEL),
     MODEL_PROFILE.api,
     "on" if MODEL_PROFILE.hosted_tools else "off",
+    MODEL_PROFILE.max_tokens,
 )
 
 
@@ -325,10 +350,9 @@ def create_agent(mcp_servers: List[MCPServer]) -> Agent:
         model_settings=ModelSettings(
             reasoning=MODEL_PROFILE.reasoning,
             extra_body=MODEL_PROFILE.extra_body,
-            # Left unset, the gateway applies a small default. On GPT-5 that
-            # budget is shared with reasoning, so a medium-effort answer is
-            # often cut off mid-sentence. 32k leaves room for both.
-            max_tokens=32768,
+            # Per-model Databricks output cap. A value above the cap is a 400;
+            # unset, some models (Claude Sonnet 4, GPT-5) stop far too early.
+            max_tokens=MODEL_PROFILE.max_tokens,
         ),
     )
 

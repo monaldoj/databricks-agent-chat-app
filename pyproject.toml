@@ -35,6 +35,9 @@ dev = [
 [tool.uv]
 default-groups = ["dev"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 
 [project.scripts]
 setup-mlflow-experiment = "scripts.setup_mlflow_experiment:main"
