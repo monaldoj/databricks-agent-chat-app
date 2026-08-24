@@ -1,12 +1,8 @@
-# Web Search + Genie Agent
+# Databricks Agent Chat App
 
-A Databricks App that exposes an OpenAI Responses API agent with:
+A Databricks App that runs an OpenAI-compatible agent with web search, optional Genie spaces, MLflow traces in Unity Catalog, a built-in chat UI, and persistent chat history in Lakebase.
 
-- Web search
-- Optional Databricks Genie spaces
-- MLflow traces stored in Unity Catalog
-- A built-in chat UI
-- Persistent chat history in Lakebase Autoscaling
+Repo: [https://github.com/monaldoj/databricks-agent-chat-app](https://github.com/monaldoj/databricks-agent-chat-app)
 
 ## Prerequisites
 
@@ -14,181 +10,109 @@ A Databricks App that exposes an OpenAI Responses API agent with:
 - [uv](https://docs.astral.sh/uv/)
 - Node.js 20+
 - [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install)
-- A Databricks CLI profile with access to:
-  - A Unity Catalog catalog and schema
-  - A SQL warehouse
-  - Databricks Apps and Lakebase Autoscaling
+- A workspace with a Unity Catalog catalog/schema, a SQL warehouse, Databricks Apps, and Lakebase Autoscaling
 
-## Setup and deploy
+A Genie space is **not** required to get started. Attach one later with `BUNDLE_VAR_genie_space_ids` if you want natural-language SQL tools.
 
-### 1. Authenticate
+The recommended model is `system.ai.gemini-3-6-flash`.
+
+## 1. Clone
 
 ```bash
-databricks auth login --profile <profile>
-export DATABRICKS_CONFIG_PROFILE=<profile>
+git clone https://github.com/monaldoj/databricks-agent-chat-app.git
+cd databricks-agent-chat-app
 ```
 
-### 2. Set up the MLflow experiment
+## 2. Log in to the workspace
+
+```bash
+databricks auth login --profile DEFAULT
+export DATABRICKS_CONFIG_PROFILE=DEFAULT
+```
+
+Use `--profile DEFAULT` (or `DATABRICKS_CONFIG_PROFILE`) on every later CLI command so you target this workspace.
+
+## 3. Set bundle variables
+
+Export these before `databricks bundle deploy`. Replace the example values with IDs from **your** workspace.
+
+```bash
+export BUNDLE_VAR_app_name=agent-chat-app
+export BUNDLE_VAR_lakebase_project_id=agent-chat-app-lakebase
+export BUNDLE_VAR_experiment_id=<pull from experiment you created in MLflow>
+export BUNDLE_VAR_sql_warehouse_id=<pull from compute section of databricks>
+export BUNDLE_VAR_trace_catalog=<catalog you selected when setting up the MLflow experiment>
+export BUNDLE_VAR_trace_schema=<schema you selected when setting up the MLflow experiment>
+export BUNDLE_VAR_trace_table_prefix=<prefix you selected when setting up the MLflow experiment>
+export BUNDLE_VAR_agent_model=system.ai.gemini-3-6-flash
+```
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `BUNDLE_VAR_app_name` | Yes | Workspace-unique Databricks App name. Prefer the `agent-` prefix. |
+| `BUNDLE_VAR_experiment_id` | Yes | Existing UC-backed MLflow experiment. |
+| `BUNDLE_VAR_sql_warehouse_id` | Yes | Warehouse used to create and query UC trace tables. |
+| `BUNDLE_VAR_trace_catalog` / `trace_schema` / `trace_table_prefix` | Yes | Catalog, schema, and prefix of the experiment's OTEL trace tables. |
+| `BUNDLE_VAR_agent_model` | Recommended | Defaults to the model in `agent_server/agent.py` if unset. Use `system.ai.gemini-3-6-flash`. |
+| `BUNDLE_VAR_lakebase_project_id` | No | Defaults to `<app-name>-lakebase`. The deploy creates the project if it does not exist. |
+| `BUNDLE_VAR_genie_space_ids` | No | Comma-separated Genie space ids. Omit this to deploy without Genie. |
+
+If you do not already have an MLflow experiment and trace tables, create them first:
 
 ```bash
 uv run setup-mlflow-experiment \
-  --profile "$DATABRICKS_CONFIG_PROFILE" \
-  --experiment-name /Users/<user>/agent-web-search-genie \
+  --profile DEFAULT \
+  --experiment-name /Users/<user>/agent-chat-app \
   --catalog <catalog> \
-  --schema <schema>
+  --schema <schema> \
+  --app-name agent-chat-app \
+  --agent-model system.ai.gemini-3-6-flash
 ```
 
-This command:
+That command writes `.env` and DAB overrides so you can skip the `BUNDLE_VAR_*` exports above. Re-run it whenever you point this checkout at a different workspace.
 
-- Creates or reuses the named MLflow experiment
-- Backs its traces with Unity Catalog tables
-- Uses the normalized experiment leaf name as the table prefix
-- Selects the first running accessible SQL warehouse
-- Reuses the app's Lakebase project, or names a new one for the deploy to create
-- Writes local settings to `.env`
-- Writes DAB settings to `.databricks/bundle/dev/variable-overrides.json`
-
-Use `--app-name <name>` to name the app (default `agent-web-search-genie-<target>`),
-`--sql-warehouse-id <id>` to select a specific warehouse, or `--target prod` to
-configure another bundle target. Re-running the command keeps the app, warehouse,
-and Lakebase project it already resolved.
-
-Re-run this command whenever you point a target at a different workspace. Its
-ids are workspace-specific, and the command also swaps the target's deployment
-state to match, so each workspace keeps its own (see [Deploying to a second
-workspace](#deploying-to-a-second-workspace)).
-
-### 3. Deploy
+To add Genie on a later deploy (each signed-in user must have access to the space):
 
 ```bash
-databricks bundle validate --profile "$DATABRICKS_CONFIG_PROFILE"
-databricks bundle deploy --profile "$DATABRICKS_CONFIG_PROFILE"
+export BUNDLE_VAR_genie_space_ids=01f117dad52a14098f4f6b2153480c07
 ```
 
-That single deployment:
+## 4. Deploy
+
+```bash
+databricks bundle validate --profile DEFAULT
+databricks bundle deploy --profile DEFAULT
+```
+
+That single deploy:
 
 - Creates and starts the Databricks App
-- Creates a Lakebase Autoscaling project, which brings its own production branch and endpoint
+- Creates a Lakebase Autoscaling project (production branch and primary endpoint) if needed
 - Binds the app to the project's `databricks_postgres` database
-- Binds the UC-backed MLflow experiment
-- Grants the app access to the experiment, SQL warehouse, and trace tables
+- Binds the UC-backed MLflow experiment, SQL warehouse, and trace tables
 
-No post-deployment script or `databricks bundle run` is required.
+No `databricks bundle run` step is required. The app starts as part of the deploy.
 
-## Deploying to a second workspace
-
-Run the experiment setup command against the new profile before deploying:
+Check status and logs:
 
 ```bash
-uv run setup-mlflow-experiment --profile <new-profile> \
-  --experiment-name /Users/<user>/agent-web-search-genie \
-  --catalog <catalog> --schema <schema>
+databricks bundle summary --profile DEFAULT
+databricks apps get agent-chat-app --profile DEFAULT
+databricks apps logs agent-chat-app --follow --profile DEFAULT
 ```
 
-DAB keys deployment state by target name alone, under
-`.databricks/bundle/<target>/`. The setup command parks the outgoing workspace's
-state as `.databricks/bundle/<target>@<host>/` and restores it if you target that
-workspace again, so both workspaces stay deployable from the same target.
-
-Deploying with state from another workspace crashes the CLI (v1.10.0) with a nil
-pointer panic in `ResourceApp.OverrideChangeDesc`: it plans against an app id the
-workspace does not have. If you hit that, run the setup command above and deploy
-again.
-
-## Optional configuration
-
-The setup command pins the app name and Lakebase project in
-`.databricks/bundle/<target>/variable-overrides.json`; without it they default to
-`agent-web-search-genie-<target>` and `<app-name>-lakebase`. Pass
-`--genie-space-ids <space-id>,<space-id>` to pin Genie spaces in the same file, or
-export them for a single deploy:
+To deploy to another bundle target (`test`, `prod`, and so on):
 
 ```bash
-export BUNDLE_VAR_genie_space_ids=<space-id>,<space-id>
-```
-
-Genie calls use on-behalf-of user authentication. Each signed-in user must have
-access to the configured Genie spaces.
-
-## Lakebase compute settings
-
-The bundle declares the Lakebase project and nothing below it, so each workspace
-applies its own defaults to the production branch and its endpoint. Workspace tiers
-disagree about compute — Free Edition pins its endpoints to 1 CU and rejects every
-write to the scale-to-zero timeout, which fails any deploy that tries to set one.
-Change the autoscaling range or the idle timeout per workspace instead:
-
-```bash
-databricks postgres update-endpoint \
-  projects/<project-id>/branches/production/endpoints/primary \
-  "spec.suspension" --json '{"spec": {"suspend_timeout_duration": "3600s"}}' \
-  --profile <profile>
-```
-
-## Lakebase project names
-
-By default the app uses a project named `<app-name>-lakebase`, created on the first
-deploy. Deleting a project reserves its id until it is purged a week later, so that
-default name stops working for a week after any deletion. The setup command avoids
-the wait: it reuses the app's live project when there is one and otherwise pins a
-timestamped id such as `agent-web-search-genie-dev-lakebase-202608131949`. It also
-repairs the target's deployment state, binding an adopted app or project and
-releasing state that names one which no longer exists.
-
-To start over with an empty chat history, delete the project and re-run the setup
-command — the next deploy creates a fresh one under a new id:
-
-```bash
-databricks postgres delete-project projects/<project-id> --profile <profile>
+databricks bundle deploy --target prod --profile DEFAULT
 ```
 
 ## Local development
 
-After running the experiment setup command:
+After the experiment setup command (or an equivalent `.env`):
 
 ```bash
 uv run start-app
 ```
 
-Open <http://localhost:8000>.
-
-Run only the API server:
-
-```bash
-uv run start-server --reload
-```
-
-Local chat history is ephemeral unless `.env` contains
-`LAKEBASE_PROJECT_ID`, `PGHOST`, or `POSTGRES_URL`.
-
-## Query the deployed app
-
-```python
-from databricks.sdk import WorkspaceClient
-from databricks_openai import DatabricksOpenAI
-
-client = DatabricksOpenAI(workspace_client=WorkspaceClient())
-
-response = client.responses.create(
-    model="apps/<app-name>",
-    input="What can you help me with?",
-)
-print(response)
-```
-
-## Key files
-
-- `agent_server/agent.py` — agent, model, instructions, and tools
-- `agent_server/start_server.py` — MLflow AgentServer entry point
-- `scripts/setup_mlflow_experiment.py` — one-time workspace/target setup
-- `scripts/start_app.py` — app runtime entry point
-- `databricks.yml` — app, Lakebase, environment, and permissions
-- `app.yaml` — non-DAB app configuration
-- `e2e-chatbot-app-next/` — chat UI
-
-## Resource lifecycle
-
-The Lakebase Autoscaling project has `prevent_destroy: true` so normal bundle operations
-cannot accidentally delete persistent chat history. Adopting an existing app or
-Lakebase project requires an explicit one-time `databricks bundle deployment
-bind`.
+Open [http://localhost:8000](http://localhost:8000). Local chat history is ephemeral unless `.env` contains `LAKEBASE_PROJECT_ID`, `PGHOST`, or `POSTGRES_URL`.
