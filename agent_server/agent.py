@@ -152,7 +152,9 @@ and say so plainly when a question needs current information you cannot look up.
 GEMINI_WEB_SEARCH_INSTRUCTIONS = """\
 You can search the live web through Google Search for current events, recent data, \
 and anything that is not in your training data. Use it whenever a question needs \
-up-to-date information, and cite the sources you find."""
+up-to-date information, and cite the sources you find. If you list source links, \
+put them once at the end of the answer under a Sources heading — never after the \
+search step or in the middle of the briefing."""
 
 
 def configured_model() -> str:

@@ -31,7 +31,10 @@ import {
   isNamePart,
   joinMessagePartSegments,
 } from './databricks-message-part-transformers';
-import { SourceLinkPill } from './databricks-message-citation';
+import {
+  collectSourceUrlParts,
+  MessageSources,
+} from './databricks-message-citation';
 import { MessageError } from './message-error';
 import { MessageOAuthError } from './message-oauth-error';
 import { isCredentialErrorMessage } from '@/lib/oauth-error-utils';
@@ -97,11 +100,16 @@ const PurePreviewMessage = ({
 
   useDataStream();
 
+  const sourceParts = React.useMemo(
+    () => collectSourceUrlParts(message.parts),
+    [message.parts],
+  );
+
   const partSegments = React.useMemo(
     /**
      * We segment message parts into segments that can be rendered as a single component.
-     * Used to render citations as part of the associated text.
      * Note: OAuth errors are included here for inline rendering, non-OAuth errors are filtered out.
+     * Source citations are collected separately and rendered at the bottom.
      */
     () =>
       createMessagePartSegments(
@@ -249,15 +257,7 @@ const PurePreviewMessage = ({
             }
 
             // dynamic-tool parts are rendered by MessageToolGroup above.
-
-            // Support for citations/annotations
-            if (type === 'source-url') {
-              return (
-                <SourceLinkPill key={key} href={part.url}>
-                  {part.title || part.url}
-                </SourceLinkPill>
-              );
-            }
+            // source-url parts are collected into MessageSources below.
 
             // Render OAuth errors inline
             if (type === 'data-error' && isCredentialErrorMessage(part.data)) {
@@ -279,6 +279,10 @@ const PurePreviewMessage = ({
               status={activityStatus}
               lastMessage={message}
             />
+          )}
+
+          {message.role === 'assistant' && (
+            <MessageSources sources={sourceParts} />
           )}
 
           {!isReadonly && !hasOnlyErrors && (

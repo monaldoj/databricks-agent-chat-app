@@ -28,7 +28,33 @@ export const DatabricksMessageCitationStreamdownIntegration: ComponentType<
   return <DefaultAnchor {...props} />;
 };
 
-type SourcePart = Extract<ChatMessage['parts'][number], { type: 'source-url' }>;
+export type SourcePart = Extract<
+  ChatMessage['parts'][number],
+  { type: 'source-url' }
+>;
+
+/**
+ * Unique web citations from a message, in the order they first appeared.
+ *
+ * Gemini google_search (and other grounded answers) often emit `source-url`
+ * parts right after the search step. The transcript still has more to say, so
+ * callers render this list at the bottom of the assistant turn instead of
+ * inlining the pills where they arrived.
+ */
+export function collectSourceUrlParts(
+  parts: ChatMessage['parts'],
+): SourcePart[] {
+  const seen = new Set<string>();
+  const collected: SourcePart[] = [];
+  for (const part of parts) {
+    if (part.type !== 'source-url' || !part.url || seen.has(part.url)) {
+      continue;
+    }
+    seen.add(part.url);
+    collected.push(part);
+  }
+  return collected;
+}
 
 // Adds a unique suffix to the link to indicate that it is a Databricks message citation.
 const encodeDatabricksMessageCitationLink = (part: SourcePart) =>
@@ -100,6 +126,24 @@ export function SourceLinkPill({
     >
       <span className="truncate">{label}</span>
     </a>
+  );
+}
+
+/** Citation pills collected at the end of an assistant turn. */
+export function MessageSources({ sources }: { sources: SourcePart[] }) {
+  if (sources.length === 0) return null;
+
+  return (
+    <div data-testid="message-sources" className="flex flex-col gap-1.5">
+      <div className="font-medium text-muted-foreground text-xs">Sources</div>
+      <div className="flex flex-wrap items-center">
+        {sources.map((source) => (
+          <SourceLinkPill key={source.url} href={source.url}>
+            {source.title || source.url}
+          </SourceLinkPill>
+        ))}
+      </div>
+    </div>
   );
 }
 

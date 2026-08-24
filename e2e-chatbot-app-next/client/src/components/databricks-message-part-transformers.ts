@@ -1,30 +1,23 @@
 import type { ChatMessage } from '@chat-template/core';
-import { createDatabricksMessageCitationMarkdown } from './databricks-message-citation';
 import type { TextUIPart } from 'ai';
 
 /**
  * Creates segments of parts that can be rendered as a single component.
- * Used to render citations as part of the associated text.
+ *
+ * `source-url` parts are omitted here. Gemini google_search emits them as soon
+ * as grounding arrives, often before the rest of the answer, so the message
+ * renderer collects them separately and shows them at the bottom of the turn.
  */
 export const createMessagePartSegments = (parts: ChatMessage['parts']) => {
   // An array of arrays of parts
   // Allows us to render multiple parts as a single component
   const out: ChatMessage['parts'][] = [];
   for (const part of parts) {
-    const lastBlock = out[out.length - 1] || null;
-    const previousPart = lastBlock?.[lastBlock.length - 1] || null;
+    if (part.type === 'source-url') continue;
 
-    // If the previous part is a text part and the current part is a source part, add it to the current block
-    if (previousPart?.type === 'text' && part.type === 'source-url') {
-      lastBlock.push(part);
-    }
-    // If the previous part is a source-url part and the current part is a source part, add it to the current block
-    else if (
-      previousPart?.type === 'source-url' &&
-      part.type === 'source-url'
-    ) {
-      lastBlock.push(part);
-    } else if (
+    const lastBlock = out[out.length - 1] || null;
+
+    if (
       lastBlock?.[0]?.type === 'text' &&
       part.type === 'text' &&
       !isNamePart(part) &&
@@ -33,7 +26,6 @@ export const createMessagePartSegments = (parts: ChatMessage['parts']) => {
       // If the text part, or the previous part contains a <name></name> tag, add it to a new block
       // Otherwise, append sequential text parts to the same block
       lastBlock.push(part);
-      //   }
     }
     // Otherwise, add the current part to a new block
     else {
@@ -60,25 +52,13 @@ export const formatNamePart = (part: ChatMessage['parts'][number]) => {
 
 /**
  * Takes a segment of parts and joins them into a markdown-formatted string.
- * Used to render citations as part of the associated text.
+ * Citations are rendered in a footer, not inlined into this markdown.
  */
 export const joinMessagePartSegments = (parts: ChatMessage['parts']) => {
   return parts.reduce((acc, part) => {
-    switch (part.type) {
-      case 'text':
-        return acc + part.text;
-      case 'source-url':
-        console.log("acc.endsWith('|')", acc.endsWith('|'));
-        // Special case for markdown tables
-        if (acc.endsWith('|')) {
-          // 1. Remove the last pipe
-          // 2. Insert the citation markdown
-          // 3. Add the pipe back
-          return `${acc.slice(0, -1)} ${createDatabricksMessageCitationMarkdown(part)}|`;
-        }
-        return `${acc} ${createDatabricksMessageCitationMarkdown(part)}`;
-      default:
-        return acc;
+    if (part.type === 'text') {
+      return acc + part.text;
     }
+    return acc;
   }, '');
 };
