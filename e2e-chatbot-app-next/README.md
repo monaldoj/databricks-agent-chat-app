@@ -16,7 +16,7 @@ Repo: [https://github.com/monaldoj/databricks-agent-chat-app](https://github.com
 
 A Genie space is **not** required to get started. Attach one later with `BUNDLE_VAR_genie_space_ids` if you want natural-language SQL tools.
 
-The recommended model is **`system.ai.gemini-3-6-flash`**.
+The recommended model is `system.ai.gemini-3-6-flash`.
 
 ## 1. Clone
 
@@ -24,6 +24,8 @@ The recommended model is **`system.ai.gemini-3-6-flash`**.
 git clone https://github.com/monaldoj/databricks-agent-chat-app.git
 cd databricks-agent-chat-app
 ```
+
+
 
 ## 2. Log in to the workspace
 
@@ -49,15 +51,17 @@ export BUNDLE_VAR_trace_table_prefix=<prefix you selected when setting up the ML
 export BUNDLE_VAR_agent_model=system.ai.gemini-3-6-flash
 ```
 
-| Variable | Required | Notes |
-| --- | --- | --- |
-| `BUNDLE_VAR_app_name` | Yes | Workspace-unique Databricks App name. Prefer the `agent-` prefix. |
-| `BUNDLE_VAR_experiment_id` | Yes | Existing UC-backed MLflow experiment. |
-| `BUNDLE_VAR_sql_warehouse_id` | Yes | Warehouse used to create and query UC trace tables. |
-| `BUNDLE_VAR_trace_catalog` / `trace_schema` / `trace_table_prefix` | Yes | Catalog, schema, and prefix of the experiment's OTEL trace tables. |
-| `BUNDLE_VAR_agent_model` | Recommended | Defaults to the model in `agent_server/agent.py` if unset. Use `system.ai.gemini-3-6-flash`. |
-| `BUNDLE_VAR_lakebase_project_id` | No | Defaults to `<app-name>-lakebase`. The deploy creates the project if it does not exist. |
-| `BUNDLE_VAR_genie_space_ids` | No | Comma-separated Genie space ids. Omit this to deploy without Genie. |
+
+| Variable                                                           | Required    | Notes                                                                                        |
+| ------------------------------------------------------------------ | ----------- | -------------------------------------------------------------------------------------------- |
+| `BUNDLE_VAR_app_name`                                              | Yes         | Workspace-unique Databricks App name. Prefer the `agent-` prefix.                            |
+| `BUNDLE_VAR_experiment_id`                                         | Yes         | Existing UC-backed MLflow experiment.                                                        |
+| `BUNDLE_VAR_sql_warehouse_id`                                      | Yes         | Warehouse used to create and query UC trace tables.                                          |
+| `BUNDLE_VAR_trace_catalog` / `trace_schema` / `trace_table_prefix` | Yes         | Catalog, schema, and prefix of the experiment's OTEL trace tables.                           |
+| `BUNDLE_VAR_agent_model`                                           | Recommended | Defaults to the model in `agent_server/agent.py` if unset. Use `system.ai.gemini-3-6-flash`. |
+| `BUNDLE_VAR_lakebase_project_id`                                   | No          | Defaults to `<app-name>-lakebase`. The deploy creates the project if it does not exist.      |
+| `BUNDLE_VAR_genie_space_ids`                                       | No          | Comma-separated Genie space ids. Omit this to deploy without Genie.                          |
+
 
 If you do not already have an MLflow experiment and trace tables, create them first:
 
@@ -78,6 +82,8 @@ To add Genie on a later deploy (each signed-in user must have access to the spac
 ```bash
 export BUNDLE_VAR_genie_space_ids=01f117dad52a14098f4f6b2153480c07
 ```
+
+
 
 ## 4. Deploy
 
@@ -110,6 +116,8 @@ To deploy to another bundle target (`test`, `prod`, and so on):
 ```bash
 databricks bundle deploy --target prod --profile DEFAULT
 ```
+
+
 
 ## Local development
 
