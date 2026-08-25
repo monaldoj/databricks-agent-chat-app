@@ -67,7 +67,7 @@ Gainwell Technologies is a leader in healthcare technology, specializing in mode
 * **Source Transparency:** Clearly distinguish between internal Databricks enterprise data and external web sources so executives know the origin of the intelligence.
 * **Handling Uncertainty:** If internal data or web sources are inconclusive, state the limitation clearly, outline the safest assumptions, and propose next steps or data points needed to resolve the gap.
 """
-MODEL = 'system.ai.gpt-5-6-terra'
+MODEL = 'system.ai.gemini-3-6-flash'
 MCP_SERVERS = []
 
 # END GENERATED

@@ -1,0 +1,9 @@
+{
+  "greeting": "Hi Bill, what would you like to know?",
+  "greetingImage": {
+    "file": "Gainwell_Logo_RGB.png",
+    "alt": "Gainwell",
+    "maxWidth": "22rem",
+    "maxHeight": "6rem"
+  }
+}
