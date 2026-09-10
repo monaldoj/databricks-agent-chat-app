@@ -1,5 +1,5 @@
 bundle:
-  name: databricks-agent-chat-app
+  name: databricks-agent-chat-app-v2
 
 # The chat UI is vendored under e2e-chatbot-app-next/ and rebuilt in the app
 # container by `start-app`, so its installed and compiled output stays local.
