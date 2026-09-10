@@ -33,8 +33,8 @@ _PREFIX_CAPS: tuple[tuple[str, int], ...] = (
     ("meta-llama", 8192),
     ("llama", 8192),
     ("qwen", 25000),
-    ("gpt", 32768),
-    ("claude", 32768),
+    ("gpt", 65536),
+    ("claude", 65536),
     ("gemini", 65536),
 )
 
