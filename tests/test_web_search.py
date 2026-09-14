@@ -15,6 +15,7 @@ from agent_server.web_search import (
     native_web_search_rejected,
     probe_native_web_search,
     reset_web_search_mode_cache,
+    resolved_web_search_mode,
     web_search_mcp_spec,
 )
 
@@ -155,4 +156,19 @@ def test_gpt_probe_uses_responses_web_search_tool():
     assert asyncio.run(probe_native_web_search("system.ai.gpt-5-6-terra", profile, client)) is True
     client.responses.create.assert_awaited()
     assert client.responses.create.await_args.kwargs["tools"] == [{"type": "web_search"}]
+    client.chat.completions.create.assert_not_called()
+
+
+def test_resolved_mode_enters_the_lock_and_caches_mcp_fallback():
+    profile = model_profile("system.ai.gemini-3-5-flash", "medium")
+    client = _gemini_client(Exception(GEMINI_CROSS_REGION_ERROR))
+    assert (
+        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-5-flash", profile, client))
+        == "mcp"
+    )
+    client.chat.completions.create.reset_mock()
+    assert (
+        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-5-flash", profile, client))
+        == "mcp"
+    )
     client.chat.completions.create.assert_not_called()

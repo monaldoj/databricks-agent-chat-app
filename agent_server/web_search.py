@@ -30,7 +30,7 @@ _PROBE_TIMEOUT_SECONDS = 20.0
 
 _UNSET: object = object()
 _mode_cache: WebSearchMode | object = _UNSET
-_mode_lock: asyncio.Lock | None = None
+_MODE_LOCK = asyncio.Lock()
 
 
 def native_web_search_rejected(error: BaseException) -> bool:
@@ -112,13 +112,6 @@ def reset_web_search_mode_cache() -> None:
     _mode_cache = _UNSET
 
 
-def _mode_lock() -> asyncio.Lock:
-    global _mode_lock
-    if _mode_lock is None:
-        _mode_lock = asyncio.Lock()
-    return _mode_lock
-
-
 async def resolved_web_search_mode(
     model: str, profile: ModelProfile, client: Any
 ) -> WebSearchMode:
@@ -130,7 +123,7 @@ async def resolved_web_search_mode(
     global _mode_cache
     if _mode_cache is not _UNSET:
         return _mode_cache  # type: ignore[return-value]
-    async with _mode_lock():
+    async with _MODE_LOCK:
         if _mode_cache is not _UNSET:
             return _mode_cache  # type: ignore[return-value]
         mode = await detect_web_search_mode(model, profile, client)
