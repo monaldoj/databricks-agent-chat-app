@@ -181,7 +181,7 @@ deploys the app and Lakebase Autoscaling project:
 | `GENIE_SPACE_IDS` | Optional local comma-separated Genie ids. Deployments receive `BUNDLE_VAR_genie_space_ids`; each signed-in user must have access. |
 | `MLFLOW_TRACING_SQL_WAREHOUSE_ID` | Warehouse selected by experiment setup for creating and querying UC trace tables. |
 | `MLFLOW_TRACE_LOCATION` | `catalog.schema.table_prefix` written for local development. |
-| `LAKEBASE_PROJECT_ID` | Local only: `start-app` resolves the project's `production/primary` endpoint through the CLI and runs in Persistent mode. Unset, or unresolvable, means Ephemeral mode (in-memory history). The deployed app gets its connection from the bound `postgres` resource instead. |
+| `WEB_SEARCH_BACKEND` | Optional. `native` forces hosted search, `mcp` forces `system.ai.web_search`, `off` disables search. Unset, the process probes the gateway once and falls back to MCP when hosted search is rejected. |
 | `BUNDLE_VAR_app_name` | Overrides the app name pinned by setup (`--app-name`, default `agent-web-search-genie-<target>`) for one deploy. |
 | `BUNDLE_VAR_agent_model` | Overrides the model pinned by setup (`--agent-model`) for one deploy. |
 | `BUNDLE_VAR_genie_space_ids` | Optional comma-separated Genie ids for the deployed app. Pin them in `variable-overrides.json` to keep them across deploys. |
@@ -242,8 +242,13 @@ Only GPT models accept the Responses API — everything else answers `/responses
 exists only on that path (`WebSearchTool`). Gemini gets Databricks-hosted Google Search
 as a Chat Completions extra-body field (`google_search: {}`); see
 https://docs.databricks.com/aws/en/machine-learning/model-serving/web-search .
-Claude and open-weight models run with MCP tools alone and are told they have no web
-search. Reasoning effort is validated at import: a value the selected family rejects
+Hosted search is probed once per process. A workspace that rejects it — Gemini
+especially, when cross-region processing is disabled — falls back to the
+`system.ai.web_search` Unity Gateway MCP server (`/ai-gateway/mcp-services/system.ai.web_search`).
+Claude and open-weight models have no hosted search, so they take that MCP path
+directly. Set `WEB_SEARCH_BACKEND=native|mcp|off` to skip the probe. The app
+forwards the `ai-gateway` user API scope so the signed-in user can invoke the
+service. Reasoning effort is validated at import: a value the selected family rejects
 raises rather than failing on the first request.
 
 Two Gemini quirks are absorbed by `GatewayOpenAI` and `GatewayChatCompletionsModel` in
@@ -354,6 +359,7 @@ project requires an explicit one-time `bundle deployment bind`.
 | `.../client/src/lib/genie-result.ts` | Parses Genie MCP query results (schema + rows) out of tool output |
 | `.../client/src/components/genie-chart.tsx` | Renders those Genie results as charts and tables |
 | `agent_server/agent.py` | Agent logic, model, instructions, MCP servers (Genie spaces come from `GENIE_SPACE_IDS`) |
+| `agent_server/web_search.py` | Hosted web-search probe and `system.ai.web_search` MCP fallback |
 | `agent_server/model_profile.py` | Per-family API, reasoning, hosted web search, and max_tokens |
 | `agent_server/start_server.py` | FastAPI server + MLflow setup |
 | `agent_server/evaluate_agent.py` | Agent evaluation with MLflow scorers |

@@ -21,6 +21,7 @@ test.describe('describeTool', () => {
   test('names web search and python tools', () => {
     expect(describeTool('web_search')).toBe('Searching the web');
     expect(describeTool('web_search_preview')).toBe('Searching the web');
+    expect(describeTool('system_ai_web_search')).toBe('Searching the web');
     expect(describeTool('system__ai__python_exec')).toBe('Running Python');
   });
 

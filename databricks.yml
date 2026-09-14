@@ -97,6 +97,9 @@ resources:
       # (see get_user_workspace_client), which needs this scope to be forwarded.
       user_api_scopes:
         - "mcp.genie"
+        # Forwarded user token for system.ai.web_search when hosted search is
+        # unavailable (cross-region processing disabled, HIPAA, Claude, …).
+        - "ai-gateway"
 
       config:
         command: ["uv", "run", "start-app"]
