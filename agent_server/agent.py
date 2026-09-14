@@ -2,6 +2,7 @@
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from agents.mcp import MCPServer, MCPServerManager
 from typing import AsyncGenerator, List
 
@@ -16,6 +17,7 @@ from agents import (
     set_default_openai_client,
 )
 from agents.tracing import set_trace_processors
+from databricks.sdk import WorkspaceClient
 from databricks_openai.agents import McpServer
 from mlflow.genai.agent_server import invoke, stream
 from mlflow.types.responses import (
@@ -36,9 +38,14 @@ from agent_server.utils import (
     process_agent_stream_events,
 )
 from agent_server.web_search import (
+    WEB_SEARCH_MCP_NAME,
+    WEB_SEARCH_MCP_PATH,
     WebSearchMode,
+    effective_web_search_mode,
     extra_body_for,
+    is_web_search_mcp_server,
     resolved_web_search_mode,
+    uses_web_search_mcp,
     web_search_mcp_spec,
 )
 
@@ -79,6 +86,11 @@ MCP_SERVERS = []
 # END GENERATED
 
 REASONING_EFFORT = "medium"  # one of: none, low, medium, high
+
+# Unity Gateway MCP Services are slower to initialize than managed Genie MCP.
+# The agents SDK manager defaults to 10s and then *drops* a timed-out server
+# from the tool list, which looks like "I have no web search tool".
+MCP_CONNECT_TIMEOUT_SECONDS = 30.0
 
 GENIE_MCP_PATH_PREFIX = "/api/2.0/mcp/genie/"
 
@@ -275,6 +287,82 @@ def init_mcp_servers(web_search: WebSearchMode):
     return servers
 
 
+def _mcp_server_url(server: MCPServer) -> str:
+    params = getattr(server, "params", None) or {}
+    return params.get("url") or ""
+
+
+def _web_search_mcp_connected(servers: List[MCPServer]) -> bool:
+    return any(
+        is_web_search_mcp_server(getattr(server, "name", None), _mcp_server_url(server))
+        for server in servers
+    )
+
+
+def _log_mcp_failures(manager: MCPServerManager) -> None:
+    for server in manager.failed_servers:
+        logging.error(
+            "Failed to connect MCP server %s at %s: %s",
+            getattr(server, "name", "?"),
+            _mcp_server_url(server),
+            manager.errors.get(server),
+        )
+
+
+def _web_search_mcp_server(workspace_client: WorkspaceClient) -> McpServer:
+    return McpServer(
+        name=WEB_SEARCH_MCP_NAME,
+        url=build_mcp_url(WEB_SEARCH_MCP_PATH, workspace_client),
+        workspace_client=workspace_client,
+    )
+
+
+@asynccontextmanager
+async def connected_agent(web_search: WebSearchMode):
+    """Connect MCP servers for one turn.
+
+    ``MCPServerManager`` drops servers that fail to connect (timeout, 401 from
+    a user token missing ``ai-gateway``, workspace where ``system.ai.web_search``
+    is unavailable). If the Unity Gateway web-search server was requested and
+    the user's token could not open it, retry once as the app service principal
+    — public web search is not user-specific. If that also fails, run without
+    search and tell the model so, instead of claiming a tool that is not there.
+    """
+    servers = init_mcp_servers(web_search)
+    async with MCPServerManager(
+        servers=servers,
+        connect_in_parallel=True,
+        connect_timeout_seconds=MCP_CONNECT_TIMEOUT_SECONDS,
+    ) as manager:
+        _log_mcp_failures(manager)
+        active = list(manager.active_servers)
+        if uses_web_search_mcp(web_search) and not _web_search_mcp_connected(active):
+            logging.warning(
+                "OBO connect to %s failed; retrying as the app service principal",
+                WEB_SEARCH_MCP_PATH,
+            )
+            app_server = _web_search_mcp_server(WorkspaceClient())
+            async with MCPServerManager(
+                servers=[app_server],
+                connect_timeout_seconds=MCP_CONNECT_TIMEOUT_SECONDS,
+            ) as app_manager:
+                _log_mcp_failures(app_manager)
+                if app_manager.active_servers:
+                    active = active + list(app_manager.active_servers)
+                mode = effective_web_search_mode(
+                    web_search,
+                    web_search_mcp_connected=_web_search_mcp_connected(active),
+                )
+                if mode == "off":
+                    logging.error(
+                        "system.ai.web_search is not reachable with the signed-in "
+                        "user token or the app identity; continuing without web search"
+                    )
+                yield create_agent(active, mode)
+            return
+        yield create_agent(active, web_search)
+
+
 def create_agent(mcp_servers: List[MCPServer], web_search: WebSearchMode) -> Agent:
     return Agent(
         name=NAME,
@@ -310,9 +398,7 @@ async def invoke(request: ResponsesAgentRequest) -> ResponsesAgentResponse:
     web_search = await resolved_web_search_mode(
         SELECTED_MODEL, MODEL_PROFILE, GATEWAY_CLIENT
     )
-    mcp_servers = init_mcp_servers(web_search)
-    async with MCPServerManager(servers = mcp_servers, connect_in_parallel=True) as manager:
-        agent = create_agent(manager.active_servers, web_search)
+    async with connected_agent(web_search) as agent:
         messages = conversation_items(request)
         result = await Runner.run(agent, messages)
         return ResponsesAgentResponse(output=[item.to_input_item() for item in result.new_items])
@@ -323,9 +409,7 @@ async def stream(request: dict) -> AsyncGenerator[ResponsesAgentStreamEvent, Non
     web_search = await resolved_web_search_mode(
         SELECTED_MODEL, MODEL_PROFILE, GATEWAY_CLIENT
     )
-    mcp_servers = init_mcp_servers(web_search)
-    async with MCPServerManager(servers = mcp_servers, connect_in_parallel=True) as manager:
-        agent = create_agent(manager.active_servers, web_search)
+    async with connected_agent(web_search) as agent:
         messages = conversation_items(request)
         result = Runner.run_streamed(agent, input=messages)
 

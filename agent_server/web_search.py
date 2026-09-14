@@ -63,6 +63,23 @@ def uses_web_search_mcp(mode: WebSearchMode) -> bool:
     return mode == "mcp"
 
 
+def is_web_search_mcp_server(name: str | None, url: str | None = None) -> bool:
+    if name == WEB_SEARCH_MCP_NAME:
+        return True
+    if url and url.rstrip("/").endswith("system.ai.web_search"):
+        return True
+    return False
+
+
+def effective_web_search_mode(
+    requested: WebSearchMode, *, web_search_mcp_connected: bool
+) -> WebSearchMode:
+    """Don't tell the model it has MCP search if that server never connected."""
+    if requested == "mcp" and not web_search_mcp_connected:
+        return "off"
+    return requested
+
+
 def web_search_mcp_spec(
     mode: WebSearchMode, already: list[tuple[str, str]] | None = None
 ) -> tuple[str, str] | None:

@@ -6,11 +6,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent_server.model_profile import model_profile
+from agent_server.utils import header_value
 from agent_server.web_search import (
     WEB_SEARCH_MCP_NAME,
     WEB_SEARCH_MCP_PATH,
     extra_body_for,
     detect_web_search_mode,
+    effective_web_search_mode,
+    is_web_search_mcp_server,
     mode_from_preference,
     native_web_search_rejected,
     probe_native_web_search,
@@ -172,3 +175,21 @@ def test_resolved_mode_enters_the_lock_and_caches_mcp_fallback():
         == "mcp"
     )
     client.chat.completions.create.assert_not_called()
+
+
+def test_effective_mode_turns_off_when_mcp_never_connected():
+    assert effective_web_search_mode("mcp", web_search_mcp_connected=False) == "off"
+    assert effective_web_search_mode("mcp", web_search_mcp_connected=True) == "mcp"
+    assert effective_web_search_mode("google", web_search_mcp_connected=False) == "google"
+
+
+def test_recognises_the_gateway_web_search_server():
+    assert is_web_search_mcp_server(WEB_SEARCH_MCP_NAME)
+    assert is_web_search_mcp_server(None, f"https://example.cloud.databricks.com{WEB_SEARCH_MCP_PATH}")
+    assert not is_web_search_mcp_server("Genie Space: Finance")
+
+
+def test_header_value_is_case_insensitive():
+    assert header_value({"X-Forwarded-Access-Token": "abc"}, "x-forwarded-access-token") == "abc"
+    assert header_value({"x-forwarded-access-token": "abc"}, "X-Forwarded-Access-Token") == "abc"
+    assert header_value({}, "x-forwarded-access-token") is None

@@ -248,8 +248,13 @@ especially, when cross-region processing is disabled — falls back to the
 Claude and open-weight models have no hosted search, so they take that MCP path
 directly. Set `WEB_SEARCH_BACKEND=native|mcp|off` to skip the probe. The app
 forwards the `ai-gateway` user API scope so the signed-in user can invoke the
-service. Reasoning effort is validated at import: a value the selected family rejects
-raises rather than failing on the first request.
+service. After adding that scope, users must re-consent (clear the app's cookies);
+a token issued before the scope change cannot call Unity Gateway, and
+`MCPServerManager` would drop the server from the tool list. If OBO still fails,
+the agent retries as the app service principal — grant that SP `EXECUTE` on
+`system.ai.web_search` if All Account Users is not enough. Reasoning effort is
+validated at import: a value the selected family rejects raises rather than
+failing on the first request.
 
 Two Gemini quirks are absorbed by `GatewayOpenAI` and `GatewayChatCompletionsModel` in
 `agent_server/utils.py`, so nothing else has to know about them. Google returns `content`

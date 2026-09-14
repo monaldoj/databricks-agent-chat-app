@@ -40,9 +40,25 @@ def build_mcp_url(path: str, workspace_client: WorkspaceClient | None = None) ->
     return f"{hostname}{path}"
 
 
+def header_value(headers: dict[str, str] | None, name: str) -> str | None:
+    """Read a header without depending on the caller's capitalization."""
+    if not headers:
+        return None
+    want = name.lower()
+    for key, value in headers.items():
+        if key.lower() == want and value:
+            return value
+    return None
+
+
 def get_user_workspace_client() -> WorkspaceClient:
-    token = get_request_headers().get("x-forwarded-access-token")
-    return WorkspaceClient(token=token, auth_type="pat")
+    token = header_value(get_request_headers(), "x-forwarded-access-token")
+    if token:
+        return WorkspaceClient(token=token, auth_type="pat")
+    logging.warning(
+        "No x-forwarded-access-token on this request; MCP calls will use the app identity"
+    )
+    return WorkspaceClient()
 
 
 # Titles only change when a space is renamed, so one lookup per process is plenty.
