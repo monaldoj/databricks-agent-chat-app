@@ -40,6 +40,7 @@ import { MessageOAuthError } from './message-oauth-error';
 import { isCredentialErrorMessage } from '@/lib/oauth-error-utils';
 import {
   groupConsecutiveToolSegments,
+  groupRepeatedWebSearchTools,
   type ToolPart,
 } from '@/lib/tool-group-segments';
 import { Streamdown } from 'streamdown';
@@ -49,6 +50,7 @@ import { parseGenieResults, type GenieResultSet } from '@/lib/genie-result';
 import { parseGenieToolName, toolDisplayName } from '@/lib/tool-labels';
 import { useGenieSpaceTitle } from '@/hooks/use-genie-space-title';
 import { ActivityIndicator } from './activity-indicator';
+import { useToolVisibility } from '@/contexts/ToolVisibilityContext';
 
 const PurePreviewMessage = ({
   message,
@@ -75,6 +77,7 @@ const PurePreviewMessage = ({
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [showErrors, setShowErrors] = useState(false);
+  const { showToolCalls } = useToolVisibility();
 
   // Hook for handling MCP approval requests
   const { submitApproval, isSubmitting, pendingApprovalId } = useApproval({
@@ -176,15 +179,20 @@ const PurePreviewMessage = ({
 
           {renderBlocks.map((block) => {
             if (block.kind === 'tool-group') {
+              const hasPendingApproval = block.tools.some(
+                (tool) => tool.state === 'approval-requested',
+              );
               return (
                 <React.Fragment key={`tool-group-${block.startIndex}`}>
-                  <MessageToolGroup
-                    tools={block.tools}
-                    isLoading={isLoading}
-                    submitApproval={submitApproval}
-                    isSubmitting={isSubmitting}
-                    pendingApprovalId={pendingApprovalId}
-                  />
+                  {(showToolCalls || hasPendingApproval) && (
+                    <MessageToolGroup
+                      tools={block.tools}
+                      isLoading={isLoading}
+                      submitApproval={submitApproval}
+                      isSubmitting={isSubmitting}
+                      pendingApprovalId={pendingApprovalId}
+                    />
+                  )}
                   <GenieToolResults tools={block.tools} />
                 </React.Fragment>
               );
@@ -221,7 +229,7 @@ const PurePreviewMessage = ({
                     <MessageContent
                       data-testid="message-content"
                       className={cn({
-                        'bg-secondary w-fit break-words rounded-2xl px-3 py-2 text-left text-base':
+                        'w-fit break-words rounded-2xl bg-secondary px-3 py-2 text-left text-base':
                           message.role === 'user',
                         'bg-transparent px-0 py-0 text-left text-base':
                           message.role === 'assistant',
@@ -349,27 +357,89 @@ const MessageToolGroup = ({
   isSubmitting: boolean;
   pendingApprovalId: string | null;
 }) => {
-  const isMultiple = tools.length > 1;
+  const displayGroups = groupRepeatedWebSearchTools(tools);
   return (
-    <div
-      className={cn('flex flex-col gap-2', {
-        'rounded-md border border-border/60 bg-muted/20 p-2': isMultiple,
-      })}
-      data-testid={isMultiple ? 'tool-group' : undefined}
-    >
-      {tools.map((tool) => (
-        <ToolPartRenderer
-          key={tool.toolCallId}
-          part={tool}
-          isLoading={isLoading}
-          submitApproval={submitApproval}
-          isSubmitting={isSubmitting}
-          pendingApprovalId={pendingApprovalId}
-        />
-      ))}
+    <div className="flex flex-col gap-2" data-testid="tool-group">
+      {displayGroups.map((group) =>
+        group.aggregate ? (
+          <WebSearchToolGroup
+            key={`web-search-${group.tools[0].toolCallId}`}
+            tools={group.tools}
+            isLoading={isLoading}
+          />
+        ) : (
+          <ToolPartRenderer
+            key={group.tools[0].toolCallId}
+            part={group.tools[0]}
+            isLoading={isLoading}
+            submitApproval={submitApproval}
+            isSubmitting={isSubmitting}
+            pendingApprovalId={pendingApprovalId}
+          />
+        ),
+      )}
     </div>
   );
 };
+
+function effectiveToolState(part: ToolPart, isLoading: boolean): ToolState {
+  if (part.providerExecuted && !isLoading && part.state === 'input-available') {
+    return 'output-available';
+  }
+  return part.state;
+}
+
+function combinedToolState(tools: ToolPart[], isLoading: boolean): ToolState {
+  const states = tools.map((tool) => effectiveToolState(tool, isLoading));
+  if (states.includes('output-error')) return 'output-error';
+  if (states.includes('input-streaming')) return 'input-streaming';
+  if (states.includes('input-available')) return 'input-available';
+  if (states.includes('approval-responded')) return 'approval-responded';
+  if (states.includes('output-denied')) return 'output-denied';
+  return 'output-available';
+}
+
+const WebSearchToolGroup = ({
+  tools,
+  isLoading,
+}: {
+  tools: ToolPart[];
+  isLoading: boolean;
+}) => (
+  <Tool defaultOpen={false}>
+    <ToolHeader
+      type={`Web search · ${tools.length} searches`}
+      state={combinedToolState(tools, isLoading)}
+    />
+    <ToolContent>
+      {tools.map((tool, index) => (
+        <div
+          className="border-border/60 border-t first:border-t-0"
+          key={tool.toolCallId}
+        >
+          <div className="px-3 pt-3 font-medium text-muted-foreground text-xs">
+            Search {index + 1}
+          </div>
+          <ToolInput input={tool.input} />
+          {(tool.output != null || tool.errorText) && (
+            <ToolOutput
+              output={
+                tool.errorText ? undefined : (
+                  <div className="whitespace-pre-wrap font-mono text-sm">
+                    {typeof tool.output === 'string'
+                      ? tool.output
+                      : JSON.stringify(tool.output, null, 2)}
+                  </div>
+                )
+              }
+              errorText={tool.errorText}
+            />
+          )}
+        </div>
+      ))}
+    </ToolContent>
+  </Tool>
+);
 
 /**
  * Renders the query results a Genie space returned, alongside its tool call.
@@ -437,12 +507,7 @@ const ToolPartRenderer = ({
   const approved: boolean | undefined =
     'approval' in part ? part.approval?.approved : undefined;
 
-  const effectiveState: ToolState = (() => {
-    if (part.providerExecuted && !isLoading && state === 'input-available') {
-      return 'output-available';
-    }
-    return state;
-  })();
+  const effectiveState = effectiveToolState(part, isLoading);
 
   if (isMcpApproval) {
     // Approval actions live inside the collapsible, so a pending request has to

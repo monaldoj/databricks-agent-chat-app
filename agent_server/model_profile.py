@@ -6,6 +6,10 @@ chat completions plus a ``google_search`` extra-body field. Claude and open-weig
 models use chat completions with no hosted search.
 
 See https://docs.databricks.com/aws/en/machine-learning/model-serving/web-search
+
+``web_search`` here is the family's *hosted* parameter. Whether this workspace
+accepts it is decided at runtime in ``agent_server.web_search``; a rejection
+falls back to the ``system.ai.web_search`` MCP Service.
 """
 
 from __future__ import annotations

@@ -9,6 +9,15 @@ const RUNNING_TOOL_STATES = new Set([
   'approval-responded',
 ]);
 
+function isWebSearchTool(toolName: string): boolean {
+  const normalized = toolName.replace(/-/g, '_').toLowerCase();
+  return (
+    normalized === 'web_search' ||
+    normalized === 'web_search_preview' ||
+    normalized.includes('web_search')
+  );
+}
+
 /**
  * Turn a tool identifier into something a reader recognises.
  *
@@ -24,7 +33,7 @@ export function describeTool(toolName: string): string {
   ) {
     return 'Querying Genie';
   }
-  if (toolName === 'web_search' || toolName === 'web_search_preview') {
+  if (isWebSearchTool(toolName)) {
     return 'Searching the web';
   }
   if (toolName === 'sandbox') return 'Running code';

@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -8,11 +9,24 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=True)
 
 # Need to import the agent to register the functions with the server
 import agent_server.agent  # noqa: E402
+from agent_server.agent import GATEWAY_CLIENT, MODEL_PROFILE, SELECTED_MODEL  # noqa: E402
+from agent_server.web_search import resolved_web_search_mode  # noqa: E402
 
 agent_server = AgentServer("ResponsesAgent", enable_chat_proxy=True)
 # Define the app as a module level variable to enable multiple workers
 app = agent_server.app  # noqa: F841
 setup_mlflow_git_based_version_tracking()
+
+
+@app.on_event("startup")
+async def prefetch_web_search_mode() -> None:
+    """Resolve hosted vs MCP search before the first chat, so that request is not the probe."""
+    try:
+        await resolved_web_search_mode(SELECTED_MODEL, MODEL_PROFILE, GATEWAY_CLIENT)
+    except Exception:
+        logging.exception(
+            "Web search mode probe failed; will retry on the first chat"
+        )
 
 
 def main():
