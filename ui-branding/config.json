@@ -1,8 +1,8 @@
 {
-  "greeting": "What would you like to know?",
+  "greeting": "Cyber Investigation Assistant",
   "greetingImage": {
-    "file": "databricks-svg.svg",
-    "alt": "Databricks",
+    "file": "primary-icon-orange-siem.svg",
+    "alt": "Cyber",
     "maxWidth": "22rem",
     "maxHeight": "6rem"
   }
