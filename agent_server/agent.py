@@ -71,7 +71,11 @@ MCP_SERVERS = []
 
 # END GENERATED
 
-REASONING_EFFORT = "medium"  # one of: none, low, medium, high
+# Reasoning tokens are drawn from the same `max_tokens` budget as the visible
+# answer (Gemini and Claude especially), so a high effort can exhaust the cap
+# mid-response. "low" leaves the most room for the reply; raise it only if answer
+# quality needs it. One of: none, low, medium, high.
+REASONING_EFFORT = "low"
 
 # Unity Gateway MCP Services are slower to initialize than managed Genie MCP.
 # The agents SDK manager defaults to 10s and then *drops* a timed-out server
@@ -116,8 +120,20 @@ def configured_model() -> str:
     return os.getenv("AGENT_MODEL", "").strip() or MODEL
 
 
+def configured_reasoning_effort() -> str:
+    """Reasoning effort for the selected model, overridable without code edits.
+
+    Reasoning tokens count against the model's output-token budget, so a lower
+    effort leaves more of `max_tokens` for the visible answer — the usual fix when
+    responses cut off mid-stream. Set `AGENT_REASONING_EFFORT` in `.env` locally or
+    the app env for a deployment. `model_profile` validates the value per family.
+    """
+    return os.getenv("AGENT_REASONING_EFFORT", "").strip() or REASONING_EFFORT
+
+
 SELECTED_MODEL = configured_model()
-MODEL_PROFILE = model_profile(SELECTED_MODEL, REASONING_EFFORT)
+SELECTED_REASONING_EFFORT = configured_reasoning_effort()
+MODEL_PROFILE = model_profile(SELECTED_MODEL, SELECTED_REASONING_EFFORT)
 
 _WEB_SEARCH_INSTRUCTIONS = {
     "google": [GEMINI_WEB_SEARCH_INSTRUCTIONS],
@@ -138,10 +154,11 @@ def instructions_for(web_search: WebSearchMode) -> str:
 
 
 logging.info(
-    "Agent model %s (%s) via %s, hosted web search %s, max_tokens %s",
+    "Agent model %s (%s) via %s, reasoning effort %s, hosted web search %s, max_tokens %s",
     SELECTED_MODEL,
     model_family(SELECTED_MODEL),
     MODEL_PROFILE.api,
+    SELECTED_REASONING_EFFORT,
     MODEL_PROFILE.web_search or "none",
     MODEL_PROFILE.max_tokens,
 )
