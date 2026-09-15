@@ -62,15 +62,10 @@ mlflow.openai.autolog()
 # GENERATED
 
 NAME = 'agent-web-search-genie'
-SYSTEM_PROMPT = """
-You are a helpful assistant. Answer clearly, accurately, and in a tone that matches the question.
-
-You may have web search tools for current events and anything not in your training data. Use them when the question needs up-to-date information, and cite what you find.
-
-You may also have Databricks Genie tools for workspace data. When they are available, use them for questions that need tables, metrics, or other governed data rather than guessing.
-
-Prefer Genie for internal or workspace data and web search for the public internet. Say which kind of source a finding came from. If a tool is missing or a result is incomplete, say so and work with what you have.
-"""
+SYSTEM_PROMPT = """\
+You are a helpful assistant. Answer clearly and accurately.
+Use web search for current public information and Genie (when available) for workspace data.
+Cite sources; say when a tool is missing or a result is incomplete."""
 MODEL = 'system.ai.gemini-3-8-flash'
 MCP_SERVERS = []
 
@@ -85,101 +80,30 @@ MCP_CONNECT_TIMEOUT_SECONDS = 30.0
 
 GENIE_MCP_PATH_PREFIX = "/api/2.0/mcp/genie/"
 
-# The chat UI already renders Genie query rows as a result card (see
-# e2e-chatbot-app-next/client/src/components/genie-chart.tsx). When Genie also
-# attached a visualization, the briefing still needs a ```chart block so the
-# plot appears in the agent's answer, not only on the tool card. Left unsaid,
-# the model either skips those charts or redraws them as mermaid. Data from
-# other tools has nothing rendering it unless the model emits a ```chart block,
-# which the UI draws (see agent-chart.tsx).
+# UI renders Genie rows on the tool card; ```chart blocks render in the answer.
 GENIE_VISUALIZATION_INSTRUCTIONS = """\
-When a Genie tool response includes a chart or visualization — a `viz` attachment, \
-visualization JSON, chart specification, or any similar chart payload — always redraw \
-it as a fenced ```chart block. Use the values Genie returned, and keep the chart type \
-Genie chose (bar, line, area, pie, and so on). Do not skip it, do not redraw it as \
-mermaid or ASCII, and do not tell the user to look at a chart that is not in your \
-message. This exception applies even when the result is only a few rows.
+If Genie returns a chart, redraw it as a ```chart JSON block (same type, real numbers).
+If it returns only rows, do not repeat them as a table or chart — describe the insight.
+For other numbers, use a markdown table unless it is a time series, 8+ categories, or the user asked for a chart.
+Chart JSON: {"type":"bar|horizontalBar|line|area|pie","title":"...","xKey":"...","series":[{"key":"...","label":"..."}],"data":[{...}]}.
+Mermaid is for diagrams, not plots."""
 
-If Genie returned only a query result (SQL and rows) with no chart, do not invent one. \
-Do not emit a mermaid block or a markdown table repeating those rows; the interface \
-already shows that result. Describe the insight in prose.
-
-For figures gathered from other tools such as web search, default to a markdown table \
-or a short KPI callout. Do not draw numbers with mermaid or ASCII. Emit a fenced \
-```chart block only when at least one of these is true:
-
-- The data is a clear time series (dates, months, quarters, or years on the x-axis).
-- There are too many points to scan in a table (about eight or more categories or periods).
-- The user explicitly asked for a chart.
-
-Never chart a single number, a two- or three-way comparison, a handful of KPIs, or any \
-result that fits comfortably in a table, unless that chart was part of a Genie response. \
-Two to seven rows belong in a table.
-
-When a chart is warranted, emit a fenced code block tagged `chart` holding a single \
-JSON object:
-
-```chart
-{
-  "type": "bar",
-  "title": "Top 12 merchants by transaction volume",
-  "xKey": "merchant",
-  "series": [{"key": "total_volume", "label": "Total volume ($)"}],
-  "data": [{"merchant": "Bookstore", "total_volume": 18973.45}]
-}
-```
-
-Rules for the block:
-- "type" is one of "bar", "horizontalBar", "line", "area", or "pie". Prefer "line" or \
-"area" for time series, "bar" or "horizontalBar" for a long categorical ranking, and \
-"pie" only for a part-to-whole composition of at most five slices.
-- "xKey" names the field in every data row that holds the category or x-axis value.
-- Each entry in "series" names a numeric field present in every data row.
-- "data" holds the real values you retrieved, as plain numbers with no currency symbols, \
-thousands separators, or surrounding quotes.
-- Put the block on its own lines, then describe in prose what the chart shows.
-
-You may still use mermaid for diagrams that illustrate a process or relationship, not for \
-plotting numbers."""
-
-# The Genie tools wait out their own queries (see GenieMcpServer), so a model only meets
-# an unfinished one when that wait ran long. Left unsaid, smaller models pass the status
-# on to the user as if it answered the question.
+# GenieMcpServer already waits; poll only if a query is still processing.
 GENIE_PENDING_INSTRUCTIONS = """\
-If a Genie tool reports that a query is still processing, call its poll tool again with the \
-conversation and message ids the tool returned, until the query reaches a completed state. \
-Never answer by telling the user to wait or to poll for the result themselves."""
+If Genie is still processing, poll with the returned ids until it completes. Do not tell the user to wait."""
 
-# Said only to models that cannot be given hosted web search, so they don't
-# offer to look something up and then answer from memory as if they had.
 NO_WEB_SEARCH_INSTRUCTIONS = """\
-You have no web search tool. Answer from the tools you do have and your own knowledge, \
-and say so plainly when a question needs current information you cannot look up."""
+No web search. Use other tools and your knowledge; say when current facts are needed."""
 
-# Gemini's search is a request parameter, not a function tool, so the model is
-# never shown a tool schema. Say explicitly that live web search is available.
+# Gemini hosted search is a request parameter, not a function tool.
 GEMINI_WEB_SEARCH_INSTRUCTIONS = """\
-You can search the live web through Google Search for current events, recent data, \
-and anything that is not in your training data. Use it whenever a question needs \
-up-to-date information, and cite the sources you find. If you list source links, \
-put them once at the end of the answer under a Sources heading — never after the \
-search step or in the middle of the briefing."""
+Live Google Search is available. Use it for current information. Put source links once at the end under Sources."""
 
-# Used when hosted search is off and the Unity Gateway MCP server is attached
-# instead. The tool name comes from the server; this just tells the model it
-# has one, so it does not answer from memory while claiming to have looked.
 MCP_WEB_SEARCH_INSTRUCTIONS = """\
-You have a web search tool. Use it whenever a question needs current events, \
-recent data, or anything that is not in your training data, and cite the sources \
-it returns. If you list source links, put them once at the end of the answer \
-under a Sources heading — never after the search step or in the middle of the \
-briefing."""
+You have a web search tool. Use it for current information. Put source links once at the end under Sources."""
 
 DATE_CONTEXT_INSTRUCTIONS = """\
-Before every web search, call get_todays_date. For questions about current events, \
-recent developments, latest information, or a relative time period, include the \
-returned date and year in the search query. Prefer results matching that date context \
-and clearly identify older sources when no current source is available."""
+Before each web search, call get_todays_date and include that date in the query."""
 
 
 def configured_model() -> str:
@@ -204,15 +128,13 @@ _WEB_SEARCH_INSTRUCTIONS = {
 
 
 def instructions_for(web_search: WebSearchMode) -> str:
-    return "\n\n".join(
-        [
-            SYSTEM_PROMPT,
-            GENIE_VISUALIZATION_INSTRUCTIONS,
-            GENIE_PENDING_INSTRUCTIONS,
-            DATE_CONTEXT_INSTRUCTIONS,
-            *_WEB_SEARCH_INSTRUCTIONS[web_search],
-        ]
-    )
+    parts = [SYSTEM_PROMPT]
+    if genie_space_ids():
+        parts += [GENIE_VISUALIZATION_INSTRUCTIONS, GENIE_PENDING_INSTRUCTIONS]
+    if web_search != "off":
+        parts.append(DATE_CONTEXT_INSTRUCTIONS)
+    parts.extend(_WEB_SEARCH_INSTRUCTIONS[web_search])
+    return "\n\n".join(part.strip() for part in parts if part.strip())
 
 
 logging.info(
