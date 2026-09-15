@@ -42,6 +42,10 @@ def native_web_search_rejected(error: BaseException) -> bool:
     mentions_search = "web search" in text or "google_search" in text
     unavailable = (
         "not available" in text
+        or "unavailable" in text
+        or "not supported" in text
+        or "unsupported" in text
+        or "does not support" in text
         or "cross-region" in text
         or "cross-geo" in text
         or "hipaa" in text

@@ -250,9 +250,10 @@ directly. Set `WEB_SEARCH_BACKEND=native|mcp|off` to skip the probe. The app
 forwards the `ai-gateway` user API scope so the signed-in user can invoke the
 service. After adding that scope, users must re-consent (clear the app's cookies);
 a token issued before the scope change cannot call Unity Gateway, and
-`MCPServerManager` would drop the server from the tool list. If OBO still fails,
-the agent retries as the app service principal — grant that SP `EXECUTE` on
-`system.ai.web_search` if All Account Users is not enough. Reasoning effort is
+`MCPServerManager` would drop the server from the tool list. If OBO still fails, the agent retries as the app service principal. Privileges
+granted to account users inherit to human users and service principals, so an
+All Account Users grant on `system.ai.web_search` covers the app SP as well.
+Reasoning effort is
 validated at import: a value the selected family rejects raises rather than
 failing on the first request.
 
@@ -261,7 +262,11 @@ Two Gemini quirks are absorbed by `GatewayOpenAI` and `GatewayChatCompletionsMod
 as a list of typed parts where chat completions specifies a string, and it rejects any
 turn whose function calls come back without the `thoughtSignature` it issued — which the
 agents SDK carries under a different name than the gateway reads. Tool results are
-collapsed to a single string for the same reason.
+collapsed to a single string for the same reason. Gemini also omits or reuses
+`function_call` ids; after a tool result for that id is in the thread the gateway
+rejects a second invocation with "Model reused a completed tool call ID". Inbound
+calls get a fresh `call_<uuid>` before the SDK stores them, and outbound history is
+rewritten the same way so a completed id never appears on a later invocation.
 
 MLflow autologging sees Gemini responses before that normalization, so it logs pydantic
 serializer warnings and cannot aggregate streamed chunks (the gateway sends `id: null`).

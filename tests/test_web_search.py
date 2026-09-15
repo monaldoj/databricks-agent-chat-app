@@ -41,13 +41,25 @@ def test_rejects_gemini_cross_region_error():
     assert native_web_search_rejected(Exception(GEMINI_CROSS_REGION_ERROR))
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Web search is unavailable for this endpoint",
+        "google_search is not supported by this model",
+        "This model does not support web search",
+    ],
+)
+def test_rejects_other_native_search_unavailable_errors(message):
+    assert native_web_search_rejected(Exception(message))
+
+
 def test_ignores_unrelated_gateway_errors():
     assert not native_web_search_rejected(Exception("Error code: 400 - max_tokens too large"))
     assert not native_web_search_rejected(Exception("INVALID_PARAMETER_VALUE: unknown field"))
 
 
 def test_gemini_mcp_strips_google_search_extra_body():
-    profile = model_profile("system.ai.gemini-3-5-flash", "medium")
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
     assert extra_body_for(profile, "google") == {"google_search": {}}
     assert extra_body_for(profile, "mcp") is None
     assert extra_body_for(profile, "off") is None
@@ -67,7 +79,7 @@ def test_families_without_hosted_search_use_mcp():
 
 
 def test_hosted_search_when_probe_succeeds():
-    gemini = model_profile("system.ai.gemini-3-5-flash", "medium")
+    gemini = model_profile("system.ai.gemini-3-8-flash", "medium")
     gpt = model_profile("system.ai.gpt-5-6-terra", "medium")
     assert mode_from_preference(gemini, native_available=True) == "google"
     assert mode_from_preference(gpt, native_available=True) == "openai"
@@ -75,7 +87,7 @@ def test_hosted_search_when_probe_succeeds():
 
 
 def test_backend_env_overrides_probe(monkeypatch):
-    gemini = model_profile("system.ai.gemini-3-5-flash", "medium")
+    gemini = model_profile("system.ai.gemini-3-8-flash", "medium")
     monkeypatch.setenv("WEB_SEARCH_BACKEND", "mcp")
     assert mode_from_preference(gemini, native_available=True) == "mcp"
     monkeypatch.setenv("WEB_SEARCH_BACKEND", "off")
@@ -111,35 +123,35 @@ def _gemini_client(side_effect: Exception | None = None) -> MagicMock:
 
 
 def test_probe_falls_back_when_gemini_rejects_hosted_search():
-    profile = model_profile("system.ai.gemini-3-5-flash", "medium")
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
     client = _gemini_client(Exception(GEMINI_CROSS_REGION_ERROR))
-    assert asyncio.run(probe_native_web_search("system.ai.gemini-3-5-flash", profile, client)) is False
+    assert asyncio.run(probe_native_web_search("system.ai.gemini-3-8-flash", profile, client)) is False
     client.chat.completions.create.assert_awaited()
     extra_body = client.chat.completions.create.await_args.kwargs["extra_body"]
     assert extra_body == {"google_search": {}}
 
 
 def test_probe_keeps_native_on_unrelated_failure():
-    profile = model_profile("system.ai.gemini-3-5-flash", "medium")
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
     client = _gemini_client(Exception("Error code: 401 - unauthorized"))
-    assert asyncio.run(probe_native_web_search("system.ai.gemini-3-5-flash", profile, client)) is True
+    assert asyncio.run(probe_native_web_search("system.ai.gemini-3-8-flash", profile, client)) is True
 
 
 def test_detect_uses_mcp_when_hosted_search_is_rejected():
-    profile = model_profile("system.ai.gemini-3-5-flash", "medium")
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
     client = _gemini_client(Exception(GEMINI_CROSS_REGION_ERROR))
     assert (
-        asyncio.run(detect_web_search_mode("system.ai.gemini-3-5-flash", profile, client))
+        asyncio.run(detect_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
         == "mcp"
     )
 
 
 def test_detect_skips_probe_when_backend_is_mcp(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BACKEND", "mcp")
-    profile = model_profile("system.ai.gemini-3-5-flash", "medium")
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
     client = _gemini_client()
     assert (
-        asyncio.run(detect_web_search_mode("system.ai.gemini-3-5-flash", profile, client))
+        asyncio.run(detect_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
         == "mcp"
     )
     client.chat.completions.create.assert_not_called()
@@ -163,15 +175,15 @@ def test_gpt_probe_uses_responses_web_search_tool():
 
 
 def test_resolved_mode_enters_the_lock_and_caches_mcp_fallback():
-    profile = model_profile("system.ai.gemini-3-5-flash", "medium")
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
     client = _gemini_client(Exception(GEMINI_CROSS_REGION_ERROR))
     assert (
-        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-5-flash", profile, client))
+        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
         == "mcp"
     )
     client.chat.completions.create.reset_mock()
     assert (
-        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-5-flash", profile, client))
+        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
         == "mcp"
     )
     client.chat.completions.create.assert_not_called()

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from collections import deque
 from time import monotonic
 from typing import Any, AsyncGenerator, AsyncIterator, Optional
 from uuid import uuid4
@@ -164,6 +165,161 @@ class GenieMcpServer(McpServer):
         return result
 
 
+_PLACEHOLDER_TOOL_CALL_IDS = frozenset({"", FAKE_RESPONSES_ID, "__fake_id__"})
+
+
+def _mint_tool_call_id() -> str:
+    return f"call_{uuid4().hex}"
+
+
+def _tool_call_id_of(tool_call: Any) -> str:
+    if isinstance(tool_call, dict):
+        return tool_call.get("id") or ""
+    return getattr(tool_call, "id", None) or ""
+
+
+def _set_tool_call_id(tool_call: Any, new_id: str) -> None:
+    if isinstance(tool_call, dict):
+        tool_call["id"] = new_id
+    else:
+        tool_call.id = new_id
+
+
+def _is_placeholder_call_id(call_id: str | None) -> bool:
+    return not call_id or call_id in _PLACEHOLDER_TOOL_CALL_IDS
+
+
+def uniquify_tool_call_ids(
+    target: Any,
+    reserved: set[str],
+    index_ids: dict[int, str] | None = None,
+) -> None:
+    """Give inbound function calls unique ids the gateway has not already completed.
+
+    Gemini often omits or reuses `function_call.id`. After a tool result for that id is
+    in the thread, a second invocation with the same id is rejected as
+    "Model reused a completed tool call ID".
+    """
+    if target is None:
+        return
+    tool_calls = (
+        target.get("tool_calls") if isinstance(target, dict) else getattr(target, "tool_calls", None)
+    )
+    if not tool_calls:
+        return
+    for tool_call in tool_calls:
+        index = (
+            tool_call.get("index")
+            if isinstance(tool_call, dict)
+            else getattr(tool_call, "index", None)
+        )
+        if index_ids is not None and index is not None and index in index_ids:
+            _set_tool_call_id(tool_call, index_ids[index])
+            continue
+        # Always mint. Gemini reuses native ids (empty, `call_0`, the previous
+        # call's id); if that value stays in history the gateway 400s the next
+        # invocation as a completed-id reuse. Stream chunks for the same index
+        # keep the id assigned on the first delta.
+        current = _mint_tool_call_id()
+        _set_tool_call_id(tool_call, current)
+        reserved.add(current)
+        if index_ids is not None and index is not None:
+            index_ids[index] = current
+
+
+def uniquify_outbound_tool_call_ids(messages: Any) -> None:
+    """Rewrite duplicate or placeholder tool-call ids in a Chat Completions request."""
+    unmatched: deque[str] = deque()
+    unmatched_set: set[str] = set()
+    completed: set[str] = set()
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") == "assistant":
+            seen_here: set[str] = set()
+            for tool_call in message.get("tool_calls") or []:
+                current = _tool_call_id_of(tool_call)
+                if (
+                    _is_placeholder_call_id(current)
+                    or current in completed
+                    or current in unmatched_set
+                    or current in seen_here
+                ):
+                    current = _mint_tool_call_id()
+                    _set_tool_call_id(tool_call, current)
+                seen_here.add(current)
+                unmatched.append(current)
+                unmatched_set.add(current)
+        elif message.get("role") == "tool":
+            tid = message.get("tool_call_id") or ""
+            if tid in unmatched_set:
+                unmatched_set.remove(tid)
+                unmatched = deque(x for x in unmatched if x != tid)
+                message["tool_call_id"] = tid
+                completed.add(tid)
+            elif unmatched:
+                tid = unmatched.popleft()
+                unmatched_set.discard(tid)
+                message["tool_call_id"] = tid
+                completed.add(tid)
+            elif _is_placeholder_call_id(tid):
+                message["tool_call_id"] = _mint_tool_call_id()
+
+
+def uniquify_response_item_call_ids(items: list[dict]) -> None:
+    """Keep function_call / function_call_output pairs unique in Responses-shaped history."""
+    unmatched: deque[str] = deque()
+    unmatched_set: set[str] = set()
+    completed: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if kind == "function_call":
+            current = item.get("call_id") or ""
+            if (
+                _is_placeholder_call_id(current)
+                or current in completed
+                or current in unmatched_set
+            ):
+                current = _mint_tool_call_id()
+                item["call_id"] = current
+            unmatched.append(current)
+            unmatched_set.add(current)
+        elif kind == "function_call_output":
+            tid = item.get("call_id") or ""
+            if tid in unmatched_set:
+                unmatched_set.remove(tid)
+                unmatched = deque(x for x in unmatched if x != tid)
+                item["call_id"] = tid
+                completed.add(tid)
+            elif unmatched:
+                tid = unmatched.popleft()
+                unmatched_set.discard(tid)
+                item["call_id"] = tid
+                completed.add(tid)
+            elif _is_placeholder_call_id(tid):
+                item["call_id"] = _mint_tool_call_id()
+
+
+def call_ids_from_input(input_items: Any) -> set[str]:
+    """Ids already spent on a function call or its result in this request."""
+    reserved: set[str] = set()
+    if isinstance(input_items, str) or not input_items:
+        return reserved
+    for item in input_items:
+        if not isinstance(item, dict):
+            continue
+        call_id = item.get("call_id") or ""
+        if call_id and not _is_placeholder_call_id(call_id):
+            reserved.add(call_id)
+        for tool_call in item.get("tool_calls") or []:
+            current = _tool_call_id_of(tool_call)
+            if current and not _is_placeholder_call_id(current):
+                reserved.add(current)
+    return reserved
+
+
 def adapt_input_for_chat_completions(items: list[dict]) -> list[dict]:
     """Give echoed assistant turns the id the chat completions converter looks for.
 
@@ -177,6 +333,7 @@ def adapt_input_for_chat_completions(items: list[dict]) -> list[dict]:
     for item in items:
         if item.get("type") == "message" and item.get("role") == "assistant":
             item.setdefault("id", FAKE_RESPONSES_ID)
+    uniquify_response_item_call_ids(items)
     return items
 
 
@@ -271,6 +428,7 @@ def _collapse_tool_output(message: dict) -> None:
 
 def adapt_outbound_messages(messages: Any) -> None:
     """Rewrite a request's messages into the shapes the gateway accepts."""
+    uniquify_outbound_tool_call_ids(messages)
     for message in messages or []:
         if not isinstance(message, dict):
             continue
@@ -295,8 +453,10 @@ class _RewritingCompletions:
 class _NormalizingStream:
     """Chat completions stream that reshapes each chunk in passing."""
 
-    def __init__(self, stream: Any) -> None:
+    def __init__(self, stream: Any, reserved_ids: set[str] | None = None) -> None:
         self._stream = stream
+        self._reserved = reserved_ids if reserved_ids is not None else set()
+        self._index_ids: dict[int, str] = {}
 
     def __aiter__(self) -> "_NormalizingStream":
         return self
@@ -304,7 +464,9 @@ class _NormalizingStream:
     async def __anext__(self) -> Any:
         chunk = await self._stream.__anext__()
         for choice in getattr(chunk, "choices", None) or []:
-            normalize_gateway_message(getattr(choice, "delta", None))
+            delta = getattr(choice, "delta", None)
+            normalize_gateway_message(delta)
+            uniquify_tool_call_ids(delta, self._reserved, self._index_ids)
         return chunk
 
     async def aclose(self) -> None:
@@ -335,12 +497,16 @@ class GatewayChatCompletionsModel(OpenAIChatCompletionsModel):
     """
 
     async def _fetch_response(self, *args: Any, **kwargs: Any) -> Any:
+        input_items = args[1] if len(args) > 1 else kwargs.get("input")
+        reserved = call_ids_from_input(input_items)
         result = await super()._fetch_response(*args, **kwargs)
         if isinstance(result, tuple):  # streaming: (Response, AsyncStream)
             response, stream = result
-            return response, _NormalizingStream(stream)
+            return response, _NormalizingStream(stream, reserved_ids=reserved)
         for choice in getattr(result, "choices", None) or []:
-            normalize_gateway_message(getattr(choice, "message", None))
+            message = getattr(choice, "message", None)
+            normalize_gateway_message(message)
+            uniquify_tool_call_ids(message, reserved)
         return result
 
 
