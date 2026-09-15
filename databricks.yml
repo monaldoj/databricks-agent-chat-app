@@ -116,8 +116,15 @@ resources:
             value: "300"
           - name: MLFLOW_EXPERIMENT_ID
             value_from: "experiment"
-          - name: MLFLOW_TRACING_DESTINATION
-            value: "${var.trace_catalog}.${var.trace_schema}"
+          # Table-prefix destinations cannot be carried in MLFLOW_TRACING_DESTINATION
+          # (catalog.schema only). start_server.py reads these and calls
+          # mlflow.set_experiment(..., trace_location=UnityCatalog(...)).
+          - name: TRACE_CATALOG
+            value: ${var.trace_catalog}
+          - name: TRACE_SCHEMA
+            value: ${var.trace_schema}
+          - name: TRACE_TABLE_PREFIX
+            value: ${var.trace_table_prefix}
           - name: MLFLOW_TRACING_SQL_WAREHOUSE_ID
             value: ${var.sql_warehouse_id}
           - name: GENIE_SPACE_IDS

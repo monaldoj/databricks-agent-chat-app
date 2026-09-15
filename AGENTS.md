@@ -180,7 +180,8 @@ deploys the app and Lakebase Autoscaling project:
 | `AGENT_MODEL` | Optional three-level model name (`system.ai.claude-opus-5`) for local runs, written by `setup-mlflow-experiment --agent-model`. Deployments receive `BUNDLE_VAR_agent_model` instead. Unset, the agent runs the model named in `agent_server/agent.py`. See "Model selection" below. |
 | `GENIE_SPACE_IDS` | Optional local comma-separated Genie ids. Deployments receive `BUNDLE_VAR_genie_space_ids`; each signed-in user must have access. |
 | `MLFLOW_TRACING_SQL_WAREHOUSE_ID` | Warehouse selected by experiment setup for creating and querying UC trace tables. |
-| `MLFLOW_TRACE_LOCATION` | `catalog.schema.table_prefix` written for local development. |
+| `TRACE_CATALOG` / `TRACE_SCHEMA` / `TRACE_TABLE_PREFIX` | Catalog, schema, and table prefix of the experiment's OTEL tables. DAB injects them from `var.trace_*`; `start_server.py` passes them to `mlflow.set_experiment(..., trace_location=UnityCatalog(...))`. Do not use `MLFLOW_TRACING_DESTINATION` — it cannot carry a table prefix. |
+| `MLFLOW_TRACE_LOCATION` | `catalog.schema.table_prefix` written for local development; fallback if the split `TRACE_*` vars are unset. |
 | `WEB_SEARCH_BACKEND` | Optional. `native` forces hosted search, `mcp` forces `system.ai.web_search`, `off` disables search. Unset, the process probes the gateway once and falls back to MCP when hosted search is rejected. |
 | `BUNDLE_VAR_app_name` | Overrides the app name pinned by setup (`--app-name`, default `agent-web-search-genie-<target>`) for one deploy. |
 | `BUNDLE_VAR_agent_model` | Overrides the model pinned by setup (`--agent-model`) for one deploy. |
