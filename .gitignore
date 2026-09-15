@@ -166,7 +166,7 @@ yarn-error.log*
 .env*.local
 
 # Local UI branding (greeting text, logo). See ui-branding.example/
-/ui-branding/
+# /ui-branding/
 
 # Playwright testing
 /test-results/

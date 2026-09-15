@@ -19,8 +19,8 @@ def test_llama_and_gpt_oss_use_published_caps():
 
 
 def test_frontier_models_keep_a_high_cap_under_provider_maxima():
-    assert max_output_tokens_for("system.ai.gpt-5-6-terra") == 65536
-    assert max_output_tokens_for("system.ai.claude-opus-5") == 65536
+    assert max_output_tokens_for("system.ai.gpt-5-6-terra") == 32768
+    assert max_output_tokens_for("system.ai.claude-opus-5") == 32768
     assert max_output_tokens_for("system.ai.gemini-3-5-flash") == 65536
 
 
