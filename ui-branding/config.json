@@ -1,8 +1,8 @@
 {
-  "greeting": "What would you like to know?",
+  "greeting": "Consular Affairs Assistant",
   "greetingImage": {
-    "file": "databricks-svg.svg",
-    "alt": "Databricks",
+    "file": "statedept.png",
+    "alt": "Department of State",
     "maxWidth": "22rem",
     "maxHeight": "6rem"
   }
