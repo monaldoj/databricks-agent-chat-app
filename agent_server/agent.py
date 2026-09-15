@@ -81,7 +81,7 @@ Gainwell Technologies is a leader in healthcare technology, specializing in mode
 * **Source Transparency:** Clearly distinguish between internal Databricks enterprise data and external web sources so executives know the origin of the intelligence.
 * **Handling Uncertainty:** If internal data or web sources are inconclusive, state the limitation clearly, outline the safest assumptions, and propose next steps or data points needed to resolve the gap.
 """
-MODEL = 'system.ai.gemini-3-6-flash'
+MODEL = 'system.ai.gemini-3-8-flash'
 MCP_SERVERS = []
 
 # END GENERATED
@@ -195,14 +195,16 @@ and clearly identify older sources when no current source is available."""
 def configured_model() -> str:
     """Name of the model to run, as the gateway should be asked for it.
 
-    `AGENT_MODEL` keeps model choice a configuration change: set it in `.env` locally
-    or in the app's env for a deployment to run `system.ai.claude-opus-5` or
-    `system.ai.gemini-3-5-flash` without editing code.
+    `AGENT_MODEL` keeps model choice a configuration change: set it in `.env`
+    locally, or pass `agent_model` in `databricks.yml` (the app env maps that
+    variable onto `AGENT_MODEL`). Unset or whitespace, the generated `MODEL`
+    default is used.
     """
     return os.getenv("AGENT_MODEL", "").strip() or MODEL
 
 
-SELECTED_MODEL = configured_model()
+MODEL = configured_model()
+SELECTED_MODEL = MODEL
 MODEL_PROFILE = model_profile(SELECTED_MODEL, REASONING_EFFORT)
 
 _WEB_SEARCH_INSTRUCTIONS = {
