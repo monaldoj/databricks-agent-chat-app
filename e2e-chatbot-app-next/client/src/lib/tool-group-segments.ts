@@ -7,6 +7,65 @@ export type RenderBlock =
   | { kind: 'segment'; parts: ChatPart[]; index: number }
   | { kind: 'tool-group'; tools: ToolPart[]; startIndex: number };
 
+export type ToolDisplayGroup = {
+  tools: ToolPart[];
+  aggregate: boolean;
+};
+
+function mcpServerName(tool: ToolPart): string {
+  return tool.callProviderMetadata?.databricks?.mcpServerName?.toString() ?? '';
+}
+
+/** True only for calls from the configured system.ai.web_search MCP service. */
+export function isWebSearchMcpTool(tool: ToolPart): boolean {
+  const server = mcpServerName(tool)
+    .replace(/[\s_.-]+/g, '')
+    .toLowerCase();
+  if (server.includes('websearch')) return true;
+
+  // Non-approval MCP results do not always retain their server metadata in
+  // older saved chats. Their function name does survive; provider-hosted
+  // searches are excluded because the provider executes those directly.
+  const toolName = tool.toolName.replace(/-/g, '_').toLowerCase();
+  return !tool.providerExecuted && toolName.includes('web_search');
+}
+
+/**
+ * Coalesce repeated web-search calls into one display group.
+ *
+ * Other tools remain separate, even when several calls are adjacent. Approval
+ * requests also remain separate because each one needs its own action controls.
+ */
+export function groupRepeatedWebSearchTools(
+  tools: ToolPart[],
+): ToolDisplayGroup[] {
+  const groups: ToolDisplayGroup[] = [];
+  const webSearchGroups = new Map<string, ToolDisplayGroup>();
+
+  for (const tool of tools) {
+    const canAggregate =
+      isWebSearchMcpTool(tool) &&
+      tool.callProviderMetadata?.databricks?.approvalRequestId == null;
+    if (!canAggregate) {
+      groups.push({ tools: [tool], aggregate: false });
+      continue;
+    }
+
+    const key = `${mcpServerName(tool)}\u0000${tool.toolName}`;
+    const existing = webSearchGroups.get(key);
+    if (existing) {
+      existing.tools.push(tool);
+      existing.aggregate = true;
+    } else {
+      const group = { tools: [tool], aggregate: false };
+      webSearchGroups.set(key, group);
+      groups.push(group);
+    }
+  }
+
+  return groups;
+}
+
 export function groupConsecutiveToolSegments(
   partSegments: ChatPart[][],
 ): RenderBlock[] {

@@ -26,6 +26,7 @@ from mlflow.types.responses import (
     ResponsesAgentStreamEvent,
 )
 
+from agent_server.date_tools import get_todays_date
 from agent_server.model_profile import ModelProfile, model_family, model_profile
 from agent_server.utils import (
     GatewayChatCompletionsModel,
@@ -184,6 +185,12 @@ it returns. If you list source links, put them once at the end of the answer \
 under a Sources heading — never after the search step or in the middle of the \
 briefing."""
 
+DATE_CONTEXT_INSTRUCTIONS = """\
+Before every web search, call get_todays_date. For questions about current events, \
+recent developments, latest information, or a relative time period, include the \
+returned date and year in the search query. Prefer results matching that date context \
+and clearly identify older sources when no current source is available."""
+
 
 def configured_model() -> str:
     """Name of the model to run, as the gateway should be asked for it.
@@ -212,6 +219,7 @@ def instructions_for(web_search: WebSearchMode) -> str:
             SYSTEM_PROMPT,
             GENIE_VISUALIZATION_INSTRUCTIONS,
             GENIE_PENDING_INSTRUCTIONS,
+            DATE_CONTEXT_INSTRUCTIONS,
             *_WEB_SEARCH_INSTRUCTIONS[web_search],
         ]
     )
@@ -374,7 +382,10 @@ def create_agent(mcp_servers: List[MCPServer], web_search: WebSearchMode) -> Age
         # Gemini's is the google_search extra-body field on chat completions.
         # Both are omitted when this workspace rejected them, in favour of
         # system.ai.web_search (see init_mcp_servers).
-        tools=[WebSearchTool()] if web_search == "openai" else [],
+        tools=[
+            get_todays_date,
+            *([WebSearchTool()] if web_search == "openai" else []),
+        ],
         model_settings=ModelSettings(
             reasoning=MODEL_PROFILE.reasoning,
             extra_body=extra_body_for(MODEL_PROFILE, web_search),
