@@ -27,6 +27,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { ClientSession } from '@chat-template/auth';
 import { Action } from './elements/actions';
+import { Switch } from './ui/switch';
 import { useToolVisibility } from '@/contexts/ToolVisibilityContext';
 
 export function AppSidebar({
@@ -115,16 +116,15 @@ export function AppSidebar({
       {/* ── User nav ────────────────────────────────────────────────────── */}
       <SidebarFooter>
         {effectiveOpen && (
-          <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-muted-foreground text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
-            <input
-              type="checkbox"
+          <div className="flex items-center justify-between gap-3 rounded-md px-2 py-2 text-muted-foreground text-sm">
+            <span id="show-tool-calls-label">Show tool calls</span>
+            <Switch
               checked={showToolCalls}
-              onChange={(event) => setShowToolCalls(event.target.checked)}
-              className="size-4 cursor-pointer accent-primary"
+              onCheckedChange={setShowToolCalls}
+              aria-labelledby="show-tool-calls-label"
               data-testid="show-tool-calls"
             />
-            <span>Show tool calls</span>
-          </label>
+          </div>
         )}
         {user && (
           <SidebarUserNav user={user} preferredUsername={preferredUsername} />
