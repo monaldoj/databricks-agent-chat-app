@@ -5,6 +5,7 @@ import { useSession } from '@/contexts/SessionContext';
 import { DatabricksLogo } from '@/components/DatabricksLogo';
 import { DbIcon } from '@/components/ui/db-icon';
 import { UserKeyIconIcon } from '@/components/icons';
+import { ToolVisibilityProvider } from '@/contexts/ToolVisibilityContext';
 
 export default function ChatLayout() {
   const { session, loading } = useSession();
@@ -43,13 +44,15 @@ export default function ChatLayout() {
   const preferredUsername = session.user.preferredUsername ?? null;
 
   return (
-    <SidebarProvider defaultOpen={!isCollapsed}>
-      <AppSidebar user={session.user} preferredUsername={preferredUsername} />
-      <SidebarInset className="h-svh overflow-hidden bg-secondary">
-        <div className="flex flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl">
-          <Outlet />
-        </div>
-      </SidebarInset>
-    </SidebarProvider>
+    <ToolVisibilityProvider>
+      <SidebarProvider defaultOpen={!isCollapsed}>
+        <AppSidebar user={session.user} preferredUsername={preferredUsername} />
+        <SidebarInset className="h-svh overflow-hidden bg-secondary">
+          <div className="flex flex-1 flex-col overflow-hidden bg-background md:my-2 md:mr-2 md:rounded-xl">
+            <Outlet />
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
+    </ToolVisibilityProvider>
   );
 }

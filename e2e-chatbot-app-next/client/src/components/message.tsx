@@ -50,6 +50,7 @@ import { parseGenieResults, type GenieResultSet } from '@/lib/genie-result';
 import { parseGenieToolName, toolDisplayName } from '@/lib/tool-labels';
 import { useGenieSpaceTitle } from '@/hooks/use-genie-space-title';
 import { ActivityIndicator } from './activity-indicator';
+import { useToolVisibility } from '@/contexts/ToolVisibilityContext';
 
 const PurePreviewMessage = ({
   message,
@@ -76,6 +77,7 @@ const PurePreviewMessage = ({
 }) => {
   const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [showErrors, setShowErrors] = useState(false);
+  const { showToolCalls } = useToolVisibility();
 
   // Hook for handling MCP approval requests
   const { submitApproval, isSubmitting, pendingApprovalId } = useApproval({
@@ -177,15 +179,20 @@ const PurePreviewMessage = ({
 
           {renderBlocks.map((block) => {
             if (block.kind === 'tool-group') {
+              const hasPendingApproval = block.tools.some(
+                (tool) => tool.state === 'approval-requested',
+              );
               return (
                 <React.Fragment key={`tool-group-${block.startIndex}`}>
-                  <MessageToolGroup
-                    tools={block.tools}
-                    isLoading={isLoading}
-                    submitApproval={submitApproval}
-                    isSubmitting={isSubmitting}
-                    pendingApprovalId={pendingApprovalId}
-                  />
+                  {(showToolCalls || hasPendingApproval) && (
+                    <MessageToolGroup
+                      tools={block.tools}
+                      isLoading={isLoading}
+                      submitApproval={submitApproval}
+                      isSubmitting={isSubmitting}
+                      pendingApprovalId={pendingApprovalId}
+                    />
+                  )}
                   <GenieToolResults tools={block.tools} />
                 </React.Fragment>
               );

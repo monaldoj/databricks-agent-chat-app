@@ -13,13 +13,21 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { DbIcon } from '@/components/ui/db-icon';
-import { NewChatIcon, SidebarCollapseIcon, SidebarExpandIcon } from '@/components/icons';
+import {
+  NewChatIcon,
+  SidebarCollapseIcon,
+  SidebarExpandIcon,
+} from '@/components/icons';
 import { cn } from '@/lib/utils';
 import type { ClientSession } from '@chat-template/auth';
-import { Button } from './ui/button';
 import { Action } from './elements/actions';
+import { useToolVisibility } from '@/contexts/ToolVisibilityContext';
 
 export function AppSidebar({
   user,
@@ -29,15 +37,14 @@ export function AppSidebar({
   preferredUsername: string | null;
 }) {
   const navigate = useNavigate();
-  const { setOpenMobile, open, openMobile, isMobile, toggleSidebar } = useSidebar();
+  const { setOpenMobile, open, openMobile, isMobile, toggleSidebar } =
+    useSidebar();
+  const { showToolCalls, setShowToolCalls } = useToolVisibility();
 
   const effectiveOpen = open || (isMobile && openMobile);
 
   return (
-    <Sidebar
-      collapsible="icon"
-      className="group-data-[side=left]:border-r-0"
-    >
+    <Sidebar collapsible="icon" className="group-data-[side=left]:border-r-0">
       {/* ── Header: app title + collapse toggle ────────────────────────── */}
       <SidebarHeader
         className={cn(
@@ -51,7 +58,7 @@ export function AppSidebar({
             onClick={() => setOpenMobile(false)}
             className="flex items-center overflow-hidden px-1"
           >
-            <span className="text-base font-semibold text-foreground">
+            <span className="font-semibold text-base text-foreground">
               Chatbot
             </span>
           </Link>
@@ -77,7 +84,7 @@ export function AppSidebar({
               <TooltipTrigger asChild>
                 <SidebarMenuButton
                   type="button"
-                  className="h-8 p-1 md:p-2 cursor-pointer"
+                  className="h-8 cursor-pointer p-1 md:p-2"
                   onClick={() => {
                     setOpenMobile(false);
                     navigate('/');
@@ -89,7 +96,12 @@ export function AppSidebar({
                   </span>
                 </SidebarMenuButton>
               </TooltipTrigger>
-              <TooltipContent side="right" style={{ display: open ? 'none' : 'block' }}>New chat</TooltipContent>
+              <TooltipContent
+                side="right"
+                style={{ display: open ? 'none' : 'block' }}
+              >
+                New chat
+              </TooltipContent>
             </Tooltip>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -102,6 +114,18 @@ export function AppSidebar({
 
       {/* ── User nav ────────────────────────────────────────────────────── */}
       <SidebarFooter>
+        {effectiveOpen && (
+          <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-muted-foreground text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+            <input
+              type="checkbox"
+              checked={showToolCalls}
+              onChange={(event) => setShowToolCalls(event.target.checked)}
+              className="size-4 cursor-pointer accent-primary"
+              data-testid="show-tool-calls"
+            />
+            <span>Show tool calls</span>
+          </label>
+        )}
         {user && (
           <SidebarUserNav user={user} preferredUsername={preferredUsername} />
         )}
