@@ -37,6 +37,7 @@ from agent_server.utils import (
     genie_space_display_name,
     get_user_workspace_client,
     process_agent_stream_events,
+    public_response_items,
 )
 from agent_server.web_search import (
     WEB_SEARCH_MCP_NAME,
@@ -324,7 +325,7 @@ async def invoke(request: ResponsesAgentRequest) -> ResponsesAgentResponse:
     async with connected_agent(web_search) as agent:
         messages = conversation_items(request)
         result = await Runner.run(agent, messages)
-        return ResponsesAgentResponse(output=[item.to_input_item() for item in result.new_items])
+        return ResponsesAgentResponse(output=public_response_items(result.new_items))
 
 
 @stream()

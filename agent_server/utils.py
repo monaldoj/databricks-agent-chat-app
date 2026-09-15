@@ -3,7 +3,7 @@ import json
 import logging
 from collections import deque
 from time import monotonic
-from typing import Any, AsyncGenerator, AsyncIterator, Optional
+from typing import Any, AsyncGenerator, AsyncIterator, Iterable, Optional
 from uuid import uuid4
 
 from agents.models.fake_id import FAKE_RESPONSES_ID
@@ -524,17 +524,74 @@ def _replace_placeholder_id(event_data: dict, item_id: str) -> None:
         event_data["item_id"] = item_id
 
 
+def _response_item_payload(item: Any) -> dict:
+    if isinstance(item, dict):
+        return item
+    to_input_item = getattr(item, "to_input_item", None)
+    if callable(to_input_item):
+        return to_input_item()
+    model_dump = getattr(item, "model_dump", None)
+    if callable(model_dump):
+        return model_dump()
+    raise TypeError(f"Unsupported response item: {type(item).__name__}")
+
+
+def public_response_items(items: Iterable[Any]) -> list[dict]:
+    """Return client-safe response items while keeping model reasoning private.
+
+    GPT Responses models emit encrypted ``reasoning`` items when reasoning is
+    enabled. They are internal continuation state, not user-facing content, and
+    older chat clients reject them during schema validation. The agent does not
+    use provider-managed continuation ids, so omitting them at this API boundary
+    preserves answer quality without exposing chain-of-thought payloads.
+    """
+    return [
+        payload
+        for item in items
+        if (payload := _response_item_payload(item)).get("type") != "reasoning"
+    ]
+
+
+def _sanitize_stream_event(event_data: dict, reasoning_item_ids: set[str]) -> bool:
+    """Remove private reasoning from an event; return whether to emit it."""
+    event_type = event_data.get("type", "")
+    item = event_data.get("item")
+
+    if isinstance(item, dict) and item.get("type") == "reasoning":
+        item_id = item.get("id")
+        if item_id:
+            reasoning_item_ids.add(item_id)
+        return False
+
+    # Summary events belong to reasoning output items even when they do not
+    # repeat the item payload.
+    if event_type.startswith("response.reasoning"):
+        return False
+    if event_data.get("item_id") in reasoning_item_ids:
+        return False
+
+    # Completion events can carry the full response and therefore repeat the
+    # encrypted item after its individual output-item events were filtered.
+    response = event_data.get("response")
+    if isinstance(response, dict) and isinstance(response.get("output"), list):
+        response["output"] = public_response_items(response["output"])
+
+    return True
+
+
 async def process_agent_stream_events(
     async_stream: AsyncIterator[StreamEvent],
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
     curr_item_id = str(uuid4())
+    reasoning_item_ids: set[str] = set()
     async for event in async_stream:
         if event.type == "raw_response_event":
             event_data = event.data.model_dump()
             if event_data["type"] == "response.output_item.added":
                 curr_item_id = str(uuid4())
             _replace_placeholder_id(event_data, curr_item_id)
-            yield event_data
+            if _sanitize_stream_event(event_data, reasoning_item_ids):
+                yield event_data
         elif event.type == "run_item_stream_event" and event.item.type == "tool_call_output_item":
             yield ResponsesAgentStreamEvent(
                 type="response.output_item.done",
