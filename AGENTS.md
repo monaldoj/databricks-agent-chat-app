@@ -270,6 +270,8 @@ collapsed to a single string for the same reason. Gemini also omits or reuses
 rejects a second invocation with "Model reused a completed tool call ID". Inbound
 calls get a fresh `call_<uuid>` before the SDK stores them, and outbound history is
 rewritten the same way so a completed id never appears on a later invocation.
+The gateway allows only one `system` (or `developer`) message; extra ones from
+`Agent.instructions` plus conversation history are joined into a single system prompt.
 
 MLflow autologging sees Gemini responses before that normalization, so it logs pydantic
 serializer warnings and cannot aggregate streamed chunks (the gateway sends `id: null`).

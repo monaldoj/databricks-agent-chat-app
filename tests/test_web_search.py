@@ -231,9 +231,13 @@ def test_live_native_failure_does_not_retry_unrelated_errors():
     )
 
 
-def test_live_400_in_native_mode_pins_mcp():
-    assert remember_native_web_search_failure(
-        "google", Exception("Error code: 400 - INVALID_PARAMETER_VALUE: unknown field")
+def test_live_system_prompt_400_is_not_a_search_failure():
+    assert not remember_native_web_search_failure(
+        "google",
+        Exception(
+            "Error code: 400 - {'error_code': 'INVALID_PARAMETER_VALUE', "
+            "'message': 'INVALID_PARAMETER_VALUE: Gemini models only support one system prompt.'}"
+        ),
     )
 
 

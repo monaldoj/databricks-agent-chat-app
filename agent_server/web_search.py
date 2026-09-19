@@ -172,15 +172,11 @@ def remember_native_web_search_failure(
 
     Returns True when the caller should retry *this* turn with MCP.
     ``WEB_SEARCH_BACKEND=native`` still wins and is not overridden.
-
-    A 400 on a live native-search turn is treated as a refusal even when the
-    message does not name web search: workspace settings often reject grounding
-    only once the model actually searches.
     """
     global _mode_cache
     if current not in _NATIVE_MODES:
         return False
-    if not (native_web_search_rejected(error) or _http_status(error) == 400):
+    if not native_web_search_rejected(error):
         return False
     if backend_override() == "native":
         logging.warning(
