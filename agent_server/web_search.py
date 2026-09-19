@@ -7,7 +7,9 @@ cross-region processing is disabled, or HIPAA/BAA is on — with
 search at all.
 
 In those cases the agent attaches Databricks' ``system.ai.web_search`` MCP
-Service instead of sending a parameter the gateway will refuse.
+Service instead of sending a parameter the gateway will refuse. The choice is
+sticky for the process: a startup probe or a live turn that is refused pins
+MCP, so later questions do not send hosted search again.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from typing import Any, Literal
 
 from agent_server.model_profile import ModelProfile
@@ -27,30 +30,54 @@ WEB_SEARCH_MCP_NAME = "Databricks Web Search"
 # Override the probe: "native" (hosted, if the family has it), "mcp", or "off".
 _BACKEND_ENV = "WEB_SEARCH_BACKEND"
 _PROBE_TIMEOUT_SECONDS = 20.0
+_NATIVE_MODES = frozenset({"openai", "google"})
+_HTTP_STATUS_RE = re.compile(r"error code:\s*(\d+)", re.I)
 
 _UNSET: object = object()
 _mode_cache: WebSearchMode | object = _UNSET
 _MODE_LOCK = asyncio.Lock()
 
 
-def native_web_search_rejected(error: BaseException) -> bool:
-    """True when the gateway refused the hosted web-search parameter itself."""
-    text = str(error).lower()
+def _error_text(error: BaseException) -> str:
+    text = str(error)
     body = getattr(error, "body", None)
     if body is not None:
-        text = f"{text} {body}".lower()
-    mentions_search = "web search" in text or "google_search" in text
+        text = f"{text} {body}"
+    return text.lower()
+
+
+def _http_status(error: BaseException) -> int | None:
+    status = getattr(error, "status_code", None)
+    if isinstance(status, int):
+        return status
+    match = _HTTP_STATUS_RE.search(_error_text(error))
+    return int(match.group(1)) if match else None
+
+
+def native_web_search_rejected(error: BaseException) -> bool:
+    """True when the gateway refused the hosted web-search parameter itself."""
+    text = _error_text(error)
+    mentions_search = (
+        "web search" in text or "google_search" in text or "web_search" in text
+    )
     unavailable = (
         "not available" in text
         or "unavailable" in text
         or "not supported" in text
         or "unsupported" in text
         or "does not support" in text
+        or "not enabled" in text
+        or "not allowed" in text
+        or "not permitted" in text
         or "cross-region" in text
         or "cross-geo" in text
         or "hipaa" in text
     )
-    return mentions_search and unavailable
+    if mentions_search and unavailable:
+        return True
+    # A 400 that names the search parameter is the same refusal, even when the
+    # message does not use "unavailable" / "not supported".
+    return mentions_search and _http_status(error) == 400
 
 
 def extra_body_for(profile: ModelProfile, mode: WebSearchMode) -> dict[str, Any] | None:
@@ -133,6 +160,46 @@ def reset_web_search_mode_cache() -> None:
     _mode_cache = _UNSET
 
 
+def remember_native_web_search_failure(
+    current: WebSearchMode, error: BaseException
+) -> bool:
+    """Pin MCP after a live native-search refusal.
+
+    The startup probe can succeed (the parameter is accepted on a dummy
+    request) and still lose on a real turn — Gemini ``google_search`` especially,
+    when workspace settings only reject search once the model actually uses it.
+    Without pinning, every later question sends hosted search again.
+
+    Returns True when the caller should retry *this* turn with MCP.
+    ``WEB_SEARCH_BACKEND=native`` still wins and is not overridden.
+
+    A 400 on a live native-search turn is treated as a refusal even when the
+    message does not name web search: workspace settings often reject grounding
+    only once the model actually searches.
+    """
+    global _mode_cache
+    if current not in _NATIVE_MODES:
+        return False
+    if not (native_web_search_rejected(error) or _http_status(error) == 400):
+        return False
+    if backend_override() == "native":
+        logging.warning(
+            "Hosted web search was refused, but WEB_SEARCH_BACKEND=native; "
+            "not falling back to %s: %s",
+            WEB_SEARCH_MCP_PATH,
+            error,
+        )
+        return False
+    _mode_cache = "mcp"
+    logging.warning(
+        "Hosted web search was refused on a live request; using %s for this "
+        "turn and every later one: %s",
+        WEB_SEARCH_MCP_PATH,
+        error,
+    )
+    return True
+
+
 async def resolved_web_search_mode(
     model: str, profile: ModelProfile, client: Any
 ) -> WebSearchMode:
@@ -174,10 +241,12 @@ async def probe_native_web_search(
 ) -> bool:
     """True when this workspace accepts the family's hosted web-search parameter.
 
-    The request is only large enough to exercise validation: a 400 naming web
-    search means the parameter is forbidden here. Any other failure is treated
-    as "assume hosted still works" so a flaky probe does not strip search from
-    workspaces that already had it.
+    The request is only large enough to exercise validation. A 400 — or any
+    error that names hosted search as unavailable — means the parameter is
+    forbidden here. Auth, timeout, and 5xx failures are treated as "assume
+    hosted still works" so a flaky probe does not strip search from workspaces
+    that already had it. A later live refusal still pins MCP; see
+    ``remember_native_web_search_failure``.
     """
     if profile.web_search is None:
         return False
@@ -187,7 +256,7 @@ async def probe_native_web_search(
             timeout=_PROBE_TIMEOUT_SECONDS,
         )
     except Exception as exc:
-        if native_web_search_rejected(exc):
+        if native_web_search_rejected(exc) or _http_status(exc) == 400:
             logging.warning(
                 "Hosted web search is not available for %s in this workspace; "
                 "falling back to %s: %s",
