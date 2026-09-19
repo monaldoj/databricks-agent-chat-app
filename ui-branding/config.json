@@ -1,9 +1,8 @@
 {
-  "greeting": "Cyber Investigation Assistant",
+  "greeting": "Hi Bill, what would you like to know?",
   "greetingImage": {
-    "file": "primary-icon-orange-siem.svg",
-    "alt": "Cyber",
+    "file": "Gainwell_Logo_RGB.png",
+    "alt": "Gainwell",
     "maxWidth": "22rem",
     "maxHeight": "6rem"
   }
-}
