@@ -45,6 +45,7 @@ from agent_server.web_search import (
     effective_web_search_mode,
     extra_body_for,
     is_web_search_mcp_server,
+    remember_native_web_search_failure,
     resolved_web_search_mode,
     uses_web_search_mcp,
     web_search_mcp_spec,
@@ -424,15 +425,34 @@ def conversation_items(request: ResponsesAgentRequest) -> List[dict]:
     return items
 
 
+async def _invoke_with(agent: Agent, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+    messages = conversation_items(request)
+    result = await Runner.run(agent, messages)
+    return ResponsesAgentResponse(output=[item.to_input_item() for item in result.new_items])
+
+
+async def _stream_with(
+    agent: Agent, request: dict
+) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
+    messages = conversation_items(request)
+    result = Runner.run_streamed(agent, input=messages)
+    async for event in process_agent_stream_events(result.stream_events()):
+        yield event
+
+
 @invoke()
 async def invoke(request: ResponsesAgentRequest) -> ResponsesAgentResponse:
     web_search = await resolved_web_search_mode(
         SELECTED_MODEL, MODEL_PROFILE, GATEWAY_CLIENT
     )
-    async with connected_agent(web_search) as agent:
-        messages = conversation_items(request)
-        result = await Runner.run(agent, messages)
-        return ResponsesAgentResponse(output=[item.to_input_item() for item in result.new_items])
+    try:
+        async with connected_agent(web_search) as agent:
+            return await _invoke_with(agent, request)
+    except Exception as exc:
+        if not remember_native_web_search_failure(web_search, exc):
+            raise
+        async with connected_agent("mcp") as agent:
+            return await _invoke_with(agent, request)
 
 
 @stream()
@@ -440,9 +460,16 @@ async def stream(request: dict) -> AsyncGenerator[ResponsesAgentStreamEvent, Non
     web_search = await resolved_web_search_mode(
         SELECTED_MODEL, MODEL_PROFILE, GATEWAY_CLIENT
     )
-    async with connected_agent(web_search) as agent:
-        messages = conversation_items(request)
-        result = Runner.run_streamed(agent, input=messages)
-
-        async for event in process_agent_stream_events(result.stream_events()):
-            yield event
+    yielded = False
+    try:
+        async with connected_agent(web_search) as agent:
+            async for event in _stream_with(agent, request):
+                yielded = True
+                yield event
+    except Exception as exc:
+        can_retry = remember_native_web_search_failure(web_search, exc)
+        if yielded or not can_retry:
+            raise
+        async with connected_agent("mcp") as agent:
+            async for event in _stream_with(agent, request):
+                yield event
