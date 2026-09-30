@@ -8,6 +8,7 @@ from agent_server.utils import (
     adapt_input_for_chat_completions,
     adapt_outbound_messages,
     call_ids_from_input,
+    collapse_system_messages,
     uniquify_outbound_tool_call_ids,
     uniquify_response_item_call_ids,
     uniquify_tool_call_ids,
@@ -143,3 +144,36 @@ def test_adapt_outbound_messages_runs_id_rewrite():
     assert call_id.startswith("call_")
     assert messages[1]["tool_call_id"] == call_id
     assert messages[1]["content"] == "ok"
+
+
+def test_collapse_joins_system_and_developer_into_one_system_message():
+    messages = [
+        {"role": "system", "content": "You are a SOC analyst."},
+        {"role": "developer", "content": "Use web search for public intel."},
+        {"role": "user", "content": "What happened?"},
+    ]
+    collapse_system_messages(messages)
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert messages[0]["content"] == (
+        "You are a SOC analyst.\n\nUse web search for public intel."
+    )
+
+
+def test_collapse_leaves_a_single_system_message_alone():
+    messages = [
+        {"role": "system", "content": "Only one."},
+        {"role": "user", "content": "Hi"},
+    ]
+    collapse_system_messages(messages)
+    assert messages[0] == {"role": "system", "content": "Only one."}
+
+
+def test_adapt_outbound_messages_collapses_system_prompts():
+    messages = [
+        {"role": "system", "content": "First"},
+        {"role": "system", "content": "Second"},
+        {"role": "user", "content": "Hi"},
+    ]
+    adapt_outbound_messages(messages)
+    assert len([m for m in messages if m["role"] == "system"]) == 1
+    assert messages[0]["content"] == "First\n\nSecond"

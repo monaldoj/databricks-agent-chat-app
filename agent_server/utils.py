@@ -426,8 +426,54 @@ def _collapse_tool_output(message: dict) -> None:
     message["content"] = "\n".join(part.get("text") or "" for part in parts)
 
 
+def _message_text(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                parts.append(part.get("text") or "")
+        return "\n".join(part for part in parts if part)
+    return ""
+
+
+_SYSTEM_ROLES = frozenset({"system", "developer"})
+
+
+def collapse_system_messages(messages: Any) -> None:
+    """Gemini accepts only one system prompt. Join every system/developer turn.
+
+    The agents SDK prepends ``Agent.instructions`` as ``role=system``. Conversation
+    history or MCP can add another system (or OpenAI ``developer``) message. Databricks
+    then rejects the request with "Gemini models only support one system prompt."
+    """
+    if not messages:
+        return
+    system_messages = [
+        message
+        for message in messages
+        if isinstance(message, dict) and message.get("role") in _SYSTEM_ROLES
+    ]
+    if len(system_messages) <= 1:
+        return
+    combined = "\n\n".join(
+        text for message in system_messages if (text := _message_text(message))
+    )
+    kept = [
+        message
+        for message in messages
+        if not (isinstance(message, dict) and message.get("role") in _SYSTEM_ROLES)
+    ]
+    messages[:] = [{"role": "system", "content": combined}, *kept]
+
+
 def adapt_outbound_messages(messages: Any) -> None:
     """Rewrite a request's messages into the shapes the gateway accepts."""
+    collapse_system_messages(messages)
     uniquify_outbound_tool_call_ids(messages)
     for message in messages or []:
         if not isinstance(message, dict):

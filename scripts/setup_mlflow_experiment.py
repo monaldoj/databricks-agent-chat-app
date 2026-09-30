@@ -408,10 +408,16 @@ def prune_retired_state(target: str, profile: str) -> None:
     print(f"Stopped tracking {', '.join(dropped)}; the live resources are untouched.")
 
 
-def update_env_file(values: dict[str, str]) -> None:
+def update_env_file(values: dict[str, str], *, drop: tuple[str, ...] = ()) -> None:
     """Mirror resolved values to .env for local development."""
     path = Path(".env")
     lines = path.read_text().splitlines() if path.exists() else []
+
+    if drop:
+        drop_pattern = re.compile(
+            rf"^\s*#?\s*(?:{'|'.join(re.escape(key) for key in drop)})="
+        )
+        lines = [line for line in lines if not drop_pattern.match(line)]
 
     for key, value in values.items():
         replacement = f"{key}={value}"
@@ -519,7 +525,9 @@ def main() -> None:
             "DATABRICKS_CONFIG_PROFILE": args.profile,
             "MLFLOW_EXPERIMENT_ID": experiment_id,
             "MLFLOW_TRACE_LOCATION": trace_location,
-            "MLFLOW_TRACING_DESTINATION": f"{args.catalog}.{args.schema}",
+            "TRACE_CATALOG": args.catalog,
+            "TRACE_SCHEMA": args.schema,
+            "TRACE_TABLE_PREFIX": prefix,
             "MLFLOW_TRACING_SQL_WAREHOUSE_ID": warehouse_id,
             "LAKEBASE_PROJECT_ID": project_id,
         }
@@ -527,7 +535,7 @@ def main() -> None:
             local_values["GENIE_SPACE_IDS"] = genie_space_ids
         if agent_model:
             local_values["AGENT_MODEL"] = agent_model
-        update_env_file(local_values)
+        update_env_file(local_values, drop=("MLFLOW_TRACING_DESTINATION",))
     except Exception as error:
         print(f"Experiment setup failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error

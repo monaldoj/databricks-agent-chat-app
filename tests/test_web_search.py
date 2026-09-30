@@ -17,6 +17,7 @@ from agent_server.web_search import (
     mode_from_preference,
     native_web_search_rejected,
     probe_native_web_search,
+    remember_native_web_search_failure,
     reset_web_search_mode_cache,
     resolved_web_search_mode,
     web_search_mcp_spec,
@@ -56,6 +57,12 @@ def test_rejects_other_native_search_unavailable_errors(message):
 def test_ignores_unrelated_gateway_errors():
     assert not native_web_search_rejected(Exception("Error code: 400 - max_tokens too large"))
     assert not native_web_search_rejected(Exception("INVALID_PARAMETER_VALUE: unknown field"))
+
+
+def test_rejects_400_that_names_google_search():
+    assert native_web_search_rejected(
+        Exception("Error code: 400 - extra body field google_search is invalid")
+    )
 
 
 def test_gemini_mcp_strips_google_search_extra_body():
@@ -137,6 +144,12 @@ def test_probe_keeps_native_on_unrelated_failure():
     assert asyncio.run(probe_native_web_search("system.ai.gemini-3-8-flash", profile, client)) is True
 
 
+def test_probe_falls_back_on_any_400():
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
+    client = _gemini_client(Exception("Error code: 400 - INVALID_PARAMETER_VALUE: unknown field"))
+    assert asyncio.run(probe_native_web_search("system.ai.gemini-3-8-flash", profile, client)) is False
+
+
 def test_detect_uses_mcp_when_hosted_search_is_rejected():
     profile = model_profile("system.ai.gemini-3-8-flash", "medium")
     client = _gemini_client(Exception(GEMINI_CROSS_REGION_ERROR))
@@ -185,6 +198,64 @@ def test_resolved_mode_enters_the_lock_and_caches_mcp_fallback():
     assert (
         asyncio.run(resolved_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
         == "mcp"
+    )
+    client.chat.completions.create.assert_not_called()
+
+
+def test_live_native_failure_pins_mcp_for_later_turns():
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
+    client = _gemini_client()
+    assert (
+        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
+        == "google"
+    )
+    client.chat.completions.create.reset_mock()
+
+    assert remember_native_web_search_failure("google", Exception(GEMINI_CROSS_REGION_ERROR))
+    assert (
+        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
+        == "mcp"
+    )
+    client.chat.completions.create.assert_not_called()
+
+
+def test_live_native_failure_does_not_retry_unrelated_errors():
+    assert not remember_native_web_search_failure(
+        "google", Exception("Error code: 401 - unauthorized")
+    )
+    assert not remember_native_web_search_failure(
+        "google", Exception("Error code: 500 - internal server error")
+    )
+    assert not remember_native_web_search_failure(
+        "mcp", Exception(GEMINI_CROSS_REGION_ERROR)
+    )
+
+
+def test_live_system_prompt_400_is_not_a_search_failure():
+    assert not remember_native_web_search_failure(
+        "google",
+        Exception(
+            "Error code: 400 - {'error_code': 'INVALID_PARAMETER_VALUE', "
+            "'message': 'INVALID_PARAMETER_VALUE: Gemini models only support one system prompt.'}"
+        ),
+    )
+
+
+def test_live_openai_search_failure_also_pins_mcp():
+    assert remember_native_web_search_failure(
+        "openai",
+        Exception("Error code: 400 - web_search is not supported for this workspace"),
+    )
+
+
+def test_live_native_failure_does_not_override_forced_native(monkeypatch):
+    monkeypatch.setenv("WEB_SEARCH_BACKEND", "native")
+    assert not remember_native_web_search_failure("google", Exception(GEMINI_CROSS_REGION_ERROR))
+    profile = model_profile("system.ai.gemini-3-8-flash", "medium")
+    client = _gemini_client()
+    assert (
+        asyncio.run(resolved_web_search_mode("system.ai.gemini-3-8-flash", profile, client))
+        == "google"
     )
     client.chat.completions.create.assert_not_called()
 
