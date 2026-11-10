@@ -57,6 +57,16 @@ variables:
       to no ids for web-search-only deployments while remaining valid for the Apps API.
     default: " "
 
+  ai_search_indexes:
+    description: |
+      Optional comma-separated AI Search (vector search) index names, each a
+      three-level catalog.schema.index. Attached as managed-MCP tools the agent
+      calls on behalf of the signed-in user (needs the ai-search user API scope
+      below, plus SELECT on the index), so no app service-principal binding is
+      needed. Override with BUNDLE_VAR_ai_search_indexes. The whitespace default is
+      normalized to no indexes while remaining valid for the Apps API.
+    default: " "
+
   lakebase_project_id:
     description: |
       Lakebase Autoscaling project id that holds persistent agent memory. Unset, the
@@ -88,7 +98,7 @@ resources:
   apps:
     databricks_agent_chat_app:
       name: ${var.app_name}
-      description: "Databricks agent with web search and Genie, with a chat UI"
+      description: "Databricks agent with web search, Genie, and AI Search, with a chat UI"
       source_code_path: ./
       lifecycle:
         started: true
@@ -97,6 +107,11 @@ resources:
       # (see get_user_workspace_client), which needs this scope to be forwarded.
       user_api_scopes:
         - "mcp.genie"
+        # Forwarded user token for the AI Search (vector search) managed MCP server
+        # at /api/2.0/mcp/ai-search/... (see AI_SEARCH_MCP_PATH_PREFIX in agent.py).
+        # Workspaces on the older naming use "vector-search" instead — change this
+        # and the path prefix together.
+        - "ai-search"
         # Forwarded user token for system.ai.web_search when hosted search is
         # unavailable (cross-region processing disabled, HIPAA, Claude, …).
         - "ai-gateway"
@@ -129,6 +144,8 @@ resources:
             value: ${var.sql_warehouse_id}
           - name: GENIE_SPACE_IDS
             value: ${var.genie_space_ids}
+          - name: AI_SEARCH_INDEXES
+            value: ${var.ai_search_indexes}
           - name: AGENT_MODEL
             value: ${var.agent_model}
 
