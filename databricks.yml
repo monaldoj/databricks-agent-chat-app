@@ -111,7 +111,7 @@ resources:
         # at /api/2.0/mcp/ai-search/... (see AI_SEARCH_MCP_PATH_PREFIX in agent.py).
         # Workspaces on the older naming use "vector-search" instead — change this
         # and the path prefix together.
-        - "ai-search"
+        - "vector-search"
         # Forwarded user token for system.ai.web_search when hosted search is
         # unavailable (cross-region processing disabled, HIPAA, Claude, …).
         - "ai-gateway"

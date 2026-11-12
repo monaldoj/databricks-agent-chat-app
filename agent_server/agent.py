@@ -98,7 +98,7 @@ GENIE_MCP_PATH_PREFIX = "/api/2.0/mcp/genie/"
 # signed-in user's token with the "ai-search" user API scope (see databricks.yml).
 # (Workspaces on the older naming use "/api/2.0/mcp/vector-search/" with the
 # "vector-search" scope — change both together if yours rejects "ai-search".)
-AI_SEARCH_MCP_PATH_PREFIX = "/api/2.0/mcp/ai-search/"
+AI_SEARCH_MCP_PATH_PREFIX = "/api/2.0/mcp/vector-search/"
 
 # The chat UI already renders Genie query rows as a result card (see
 # e2e-chatbot-app-next/client/src/components/genie-chart.tsx). When Genie also
