@@ -179,6 +179,7 @@ deploys the app and Lakebase Autoscaling project:
 | `MLFLOW_EXPERIMENT_ID` | Local experiment id written by `setup-mlflow-experiment`; DAB receives the same id from its target override. |
 | `AGENT_MODEL` | Optional three-level model name (`system.ai.claude-opus-5`) for local runs, written by `setup-mlflow-experiment --agent-model`. Deployments receive `BUNDLE_VAR_agent_model` instead. Unset, the agent runs the model named in `agent_server/agent.py`. See "Model selection" below. |
 | `GENIE_SPACE_IDS` | Optional local comma-separated Genie ids. Deployments receive `BUNDLE_VAR_genie_space_ids`; each signed-in user must have access. |
+| `AI_SEARCH_INDEXES` | Optional local comma-separated AI Search (vector search) index names, each `catalog.schema.index`. Attached as managed-MCP tools (`/api/2.0/mcp/ai-search/...`) called on behalf of the signed-in user, who needs `SELECT` on the index. Deployments receive `BUNDLE_VAR_ai_search_indexes`. The app forwards the `ai-search` user API scope. |
 | `MLFLOW_TRACING_SQL_WAREHOUSE_ID` | Warehouse selected by experiment setup for creating and querying UC trace tables. |
 | `TRACE_CATALOG` / `TRACE_SCHEMA` / `TRACE_TABLE_PREFIX` | Catalog, schema, and table prefix of the experiment's OTEL tables. DAB injects them from `var.trace_*`; `start_server.py` passes them to `mlflow.set_experiment(..., trace_location=UnityCatalog(...))`. Do not use `MLFLOW_TRACING_DESTINATION` — it cannot carry a table prefix. |
 | `MLFLOW_TRACE_LOCATION` | `catalog.schema.table_prefix` written for local development; fallback if the split `TRACE_*` vars are unset. |
@@ -186,6 +187,7 @@ deploys the app and Lakebase Autoscaling project:
 | `BUNDLE_VAR_app_name` | Overrides the app name pinned by setup (`--app-name`, default `agent-web-search-genie-<target>`) for one deploy. |
 | `BUNDLE_VAR_agent_model` | Overrides the model pinned by setup (`--agent-model`) for one deploy. |
 | `BUNDLE_VAR_genie_space_ids` | Optional comma-separated Genie ids for the deployed app. Pin them in `variable-overrides.json` to keep them across deploys. |
+| `BUNDLE_VAR_ai_search_indexes` | Optional comma-separated `catalog.schema.index` AI Search indexes for the deployed app. Pin them in `variable-overrides.json` to keep them across deploys. |
 | `BUNDLE_VAR_lakebase_project_id` | Overrides the Lakebase project pinned by setup for one deploy. Unset and unpinned, the deploy uses `<app-name>-lakebase` and creates it if missing. |
 
 The setup script creates the four UC OTEL trace tables. DAB declares each table
@@ -373,7 +375,7 @@ project requires an explicit one-time `bundle deployment bind`.
 | `e2e-chatbot-app-next/` | Chat UI, vendored from `databricks/app-templates` and **locally customized** — do not delete or re-clone it |
 | `.../client/src/lib/genie-result.ts` | Parses Genie MCP query results (schema + rows) out of tool output |
 | `.../client/src/components/genie-chart.tsx` | Renders those Genie results as charts and tables |
-| `agent_server/agent.py` | Agent logic, model, instructions, MCP servers (Genie spaces come from `GENIE_SPACE_IDS`) |
+| `agent_server/agent.py` | Agent logic, model, instructions, MCP servers (Genie spaces from `GENIE_SPACE_IDS`, AI Search indexes from `AI_SEARCH_INDEXES`) |
 | `agent_server/web_search.py` | Hosted web-search probe and `system.ai.web_search` MCP fallback |
 | `agent_server/model_profile.py` | Per-family API, reasoning, hosted web search, and max_tokens |
 | `agent_server/start_server.py` | FastAPI server + MLflow setup |

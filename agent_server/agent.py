@@ -74,12 +74,9 @@ searching so you know the current date and year, then include that context in \
 the query so results are up to date. Prefer sources that match that date, and \
 say so when the best available source is older.
 
-You may also have Databricks Genie agents as tools. When they are present, use \
-them for questions about workspace data (tables, metrics, operational queries). \
-If a question needs both live public information and internal data, search the \
-web and query Genie, then distinguish which findings came from which source. \
-If Genie tools are not available, say so and answer with web search and your \
-own knowledge instead of inventing internal numbers.
+Your available data sources are described below. Use only the ones you are told \
+you have, and never invent internal company data, table values, or document \
+contents for a source that is not available to you.
 """
 MODEL = 'system.ai.gemini-3-8-flash'
 MCP_SERVERS = []
@@ -94,6 +91,14 @@ REASONING_EFFORT = "medium"  # one of: none, low, medium, high
 MCP_CONNECT_TIMEOUT_SECONDS = 30.0
 
 GENIE_MCP_PATH_PREFIX = "/api/2.0/mcp/genie/"
+
+# Databricks managed MCP server for a Vector Search / AI Search index. The index
+# is addressed by its three-level name as path segments:
+# /api/2.0/mcp/ai-search/{catalog}/{schema}/{index}. The app forwards the
+# signed-in user's token with the "ai-search" user API scope (see databricks.yml).
+# (Workspaces on the older naming use "/api/2.0/mcp/vector-search/" with the
+# "vector-search" scope — change both together if yours rejects "ai-search".)
+AI_SEARCH_MCP_PATH_PREFIX = "/api/2.0/mcp/vector-search/"
 
 # The chat UI already renders Genie query rows as a result card (see
 # e2e-chatbot-app-next/client/src/components/genie-chart.tsx). When Genie also
@@ -160,6 +165,34 @@ If a Genie tool reports that a query is still processing, call its poll tool aga
 conversation and message ids the tool returned, until the query reaches a completed state. \
 Never answer by telling the user to wait or to poll for the result themselves."""
 
+# The data-source guidance below is assembled per turn from the sources actually
+# configured in the environment (Genie spaces and/or AI Search indexes), so the
+# model is only ever told about tools it really has. See instructions_for().
+GENIE_INSTRUCTIONS = """\
+You have one or more Databricks Genie agents as tools. Use them for questions about \
+workspace data held in structured tables — metrics, aggregations, counts, trends, and \
+other operational queries. Prefer querying Genie over guessing whenever a question is \
+about internal or business data."""
+
+AI_SEARCH_INSTRUCTIONS = """\
+You have one or more Databricks AI Search (vector search) indexes as tools. Use them to \
+retrieve relevant passages from the indexed documents or knowledge base whenever a \
+question could be answered by that content. Ground your answer in the passages the index \
+returns and cite them; do not state document contents that the retrieved results do not \
+support. If the index returns nothing relevant, say so rather than inventing an answer."""
+
+GENIE_AND_AI_SEARCH_INSTRUCTIONS = """\
+When a question needs both structured figures and supporting document context, query \
+Genie for the numbers and the AI Search index for the text, then make clear which finding \
+came from which source."""
+
+# Said when neither internal data source is configured, so the model does not offer to
+# look up internal data it has no tool for.
+NO_INTERNAL_DATA_INSTRUCTIONS = """\
+You have no Databricks Genie or AI Search tools in this session. Do not invent internal \
+company data, table values, or document contents. Answer from web search and your own \
+knowledge, and say plainly when a question would require internal data you cannot access."""
+
 # Said only to models that cannot be given hosted web search, so they don't
 # offer to look something up and then answer from memory as if they had.
 NO_WEB_SEARCH_INSTRUCTIONS = """\
@@ -215,12 +248,29 @@ _WEB_SEARCH_INSTRUCTIONS = {
 }
 
 
-def instructions_for(web_search: WebSearchMode) -> str:
+def _data_source_instructions(has_genie: bool, has_ai_search: bool) -> List[str]:
+    """Tell the model which internal data sources it actually has, and only those."""
+    if has_genie and has_ai_search:
+        return [GENIE_INSTRUCTIONS, AI_SEARCH_INSTRUCTIONS, GENIE_AND_AI_SEARCH_INSTRUCTIONS]
+    if has_genie:
+        return [GENIE_INSTRUCTIONS]
+    if has_ai_search:
+        return [AI_SEARCH_INSTRUCTIONS]
+    return [NO_INTERNAL_DATA_INSTRUCTIONS]
+
+
+def instructions_for(
+    web_search: WebSearchMode, has_genie: bool, has_ai_search: bool
+) -> str:
     return "\n\n".join(
         [
             SYSTEM_PROMPT,
+            *_data_source_instructions(has_genie, has_ai_search),
+            # Chart-emission guidance covers Genie results and any other tool
+            # (web search, AI Search) whose figures the model may plot.
             GENIE_VISUALIZATION_INSTRUCTIONS,
-            GENIE_PENDING_INSTRUCTIONS,
+            # Genie's poll-to-completion note only applies when Genie is attached.
+            *([GENIE_PENDING_INSTRUCTIONS] if has_genie else []),
             DATE_CONTEXT_INSTRUCTIONS,
             *_WEB_SEARCH_INSTRUCTIONS[web_search],
         ]
@@ -266,6 +316,30 @@ def genie_space_ids() -> List[str]:
     ]
 
 
+def ai_search_indexes() -> List[str]:
+    """Three-level names of the AI Search (vector search) indexes to attach as tools.
+
+    `AI_SEARCH_INDEXES` mirrors `GENIE_SPACE_IDS`: local runs read it from `.env`,
+    bundle deployments receive it from `BUNDLE_VAR_ai_search_indexes`. Each entry is
+    a `catalog.schema.index` name. Unset or empty, no AI Search tools are attached.
+    """
+    configured = os.getenv("AI_SEARCH_INDEXES")
+    if configured is None:
+        return [
+            url[len(AI_SEARCH_MCP_PATH_PREFIX) :].replace("/", ".")
+            for _, url in MCP_SERVERS
+            if url.startswith(AI_SEARCH_MCP_PATH_PREFIX)
+        ]
+    return [
+        index.strip() for index in re.split(r"[,\s]+", configured) if index.strip()
+    ]
+
+
+def ai_search_index_display_name(index_full_name: str) -> str:
+    """Readable MCP server name for an AI Search index, from its three-level name."""
+    return f"AI Search Index: {index_full_name}"
+
+
 def init_mcp_servers(web_search: WebSearchMode):
     user_workspace_client = get_mcp_user_workspace_client()
 
@@ -280,6 +354,7 @@ def init_mcp_servers(web_search: WebSearchMode):
         (name, url)
         for (name, url) in MCP_SERVERS
         if not url.startswith(GENIE_MCP_PATH_PREFIX)
+        and not url.startswith(AI_SEARCH_MCP_PATH_PREFIX)
     ]
     spec = web_search_mcp_spec(web_search, configured)
     if spec:
@@ -293,6 +368,14 @@ def init_mcp_servers(web_search: WebSearchMode):
             GenieMcpServer,  # polls Genie's own asynchronous queries to completion
         )
         for space_id in genie_space_ids()
+    )
+    servers.extend(
+        server(
+            ai_search_index_display_name(index),
+            # The three-level index name becomes the path's catalog/schema/index.
+            f"{AI_SEARCH_MCP_PATH_PREFIX}{index.replace('.', '/')}",
+        )
+        for index in ai_search_indexes()
     )
     return servers
 
@@ -376,7 +459,11 @@ async def connected_agent(web_search: WebSearchMode):
 def create_agent(mcp_servers: List[MCPServer], web_search: WebSearchMode) -> Agent:
     return Agent(
         name=NAME,
-        instructions=instructions_for(web_search),
+        instructions=instructions_for(
+            web_search,
+            has_genie=bool(genie_space_ids()),
+            has_ai_search=bool(ai_search_indexes()),
+        ),
         model=build_model(MODEL_PROFILE),
         mcp_servers=mcp_servers,
         # Genie and other MCP tools reach every model, since they are sent as
