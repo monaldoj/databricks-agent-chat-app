@@ -365,6 +365,25 @@ project requires an explicit one-time `bundle deployment bind`.
 > instance to provision or protect. Prefer Lakebase when direct SQL access to the history
 > matters or Postgres is already in the stack.
 
+### The `nolakebase` target (no chat persistence)
+
+`databricks bundle deploy -t nolakebase` provisions the app **without** any
+Lakebase/Postgres: no project is created, no `PG*` env is injected, and the vendored
+chat UI auto-detects the absence of Postgres (`isDatabaseAvailable()` in
+`e2e-chatbot-app-next/packages/db/src/connection-core.ts`) and runs in its **Ephemeral**
+mode — chat history is not persisted. DABs YAML has no conditionals and a target cannot
+remove a resource or list item, so this works by overriding the two `type: complex`
+variables (`lakebase_project`, `app_resources`) that splice the Lakebase project and the
+app's resource list; every other target keeps Lakebase via their defaults. Run
+`uv run setup-mlflow-experiment ... --target nolakebase` for it: the script then skips
+all Lakebase work (no project is resolved, pinned, bound, or pruned, and no
+`lakebase_project_id` is written) while still setting up the experiment and trace tables.
+
+**Do NOT switch an already-Lakebase-deployed target to `nolakebase`** (or vice versa):
+per the Lakebase docs above, a resource vanishing from a target's config makes the next
+deploy delete the deployed project and its chat history. `nolakebase` is its own target
+from the start; use `dev`/`prod` when persistence matters.
+
 ---
 
 ## Key Files

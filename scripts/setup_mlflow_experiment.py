@@ -29,6 +29,11 @@ HOST_MARKER = ".workspace-host"
 APP_KEY = "responses_agent_chat_app"
 PROJECT_KEY = "chatbot_lakebase_project"
 
+# The bundle target that deploys without Lakebase (see the `nolakebase` target in
+# databricks.yml). For it the script skips every Lakebase step: no project is
+# resolved, pinned, bound, or pruned, and no lakebase_project_id is written.
+NOLAKEBASE_TARGET = "nolakebase"
+
 # The bundle used to declare the project's branch and endpoint. State written then
 # still names them, and a deploy deletes state whose node the config dropped, taking
 # the live branch — and the chat history on it — with it.
@@ -494,7 +499,11 @@ def main() -> None:
         trace_location = f"{args.catalog}.{args.schema}.{prefix}"
 
         app_name = args.app_name or f"agent-web-search-genie-{args.target}"
-        project_id = resolve_lakebase_project(workspace, args.target, app_name)
+        no_lakebase = args.target == NOLAKEBASE_TARGET
+        if no_lakebase:
+            project_id = ""
+        else:
+            project_id = resolve_lakebase_project(workspace, args.target, app_name)
 
         pinned = read_bundle_overrides(args.target)
         genie_space_ids = args.genie_space_ids or pinned.get("genie_space_ids", "")
@@ -506,21 +515,24 @@ def main() -> None:
             "trace_schema": args.schema,
             "trace_table_prefix": prefix,
             "sql_warehouse_id": warehouse_id,
-            "lakebase_project_id": project_id,
         }
+        if not no_lakebase:
+            overrides["lakebase_project_id"] = project_id
         if genie_space_ids:
             overrides["genie_space_ids"] = genie_space_ids
         if agent_model:
             overrides["agent_model"] = agent_model
         override_path = write_bundle_overrides(args.target, overrides)
-        prune_retired_state(args.target, args.profile)
+        if not no_lakebase:
+            prune_retired_state(args.target, args.profile)
         reconcile_app_binding(workspace, args.target, args.profile, app_name)
-        reconcile_lakebase_binding(
-            args.target,
-            args.profile,
-            project_id,
-            project_is_live(workspace, project_id),
-        )
+        if not no_lakebase:
+            reconcile_lakebase_binding(
+                args.target,
+                args.profile,
+                project_id,
+                project_is_live(workspace, project_id),
+            )
         local_values = {
             "DATABRICKS_CONFIG_PROFILE": args.profile,
             "MLFLOW_EXPERIMENT_ID": experiment_id,
@@ -529,8 +541,9 @@ def main() -> None:
             "TRACE_SCHEMA": args.schema,
             "TRACE_TABLE_PREFIX": prefix,
             "MLFLOW_TRACING_SQL_WAREHOUSE_ID": warehouse_id,
-            "LAKEBASE_PROJECT_ID": project_id,
         }
+        if not no_lakebase:
+            local_values["LAKEBASE_PROJECT_ID"] = project_id
         if genie_space_ids:
             local_values["GENIE_SPACE_IDS"] = genie_space_ids
         if agent_model:
@@ -545,7 +558,10 @@ def main() -> None:
     print(f"Agent model: {agent_model or 'default in agent_server/agent.py'}")
     print(f"Experiment: {args.experiment_name} ({experiment_id})")
     print(f"Trace tables: {trace_location}_otel_*")
-    print(f"Lakebase project: {project_id}")
+    if no_lakebase:
+        print("Lakebase project: none (nolakebase target — ephemeral chat history)")
+    else:
+        print(f"Lakebase project: {project_id}")
     print(f"Bundle overrides: {override_path}")
     print(
         "Next: "
