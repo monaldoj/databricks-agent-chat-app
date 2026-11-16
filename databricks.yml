@@ -67,6 +67,14 @@ variables:
       normalized to no indexes while remaining valid for the Apps API.
     default: " "
 
+  web_search:
+    description: |
+      Master switch for the agent's web search. false disables every web-search
+      path — hosted provider search and the system.ai.web_search Unity Gateway MCP
+      server alike — regardless of the agent's WEB_SEARCH_BACKEND setting. The
+      default true keeps today's behavior (probe hosted search, fall back to MCP).
+    default: true
+
   lakebase_project_id:
     description: |
       Lakebase Autoscaling project id that holds persistent agent memory. Unset, the
@@ -80,20 +88,90 @@ variables:
     description: Postgres major version for the Lakebase Autoscaling project.
     default: 17
 
+  # DABs YAML has no conditionals, and a target cannot remove a top-level resource
+  # or a list item (setting it to null/{}, or overriding it under a target, is
+  # ignored). The only working mechanism is the complex-variable splice below: the
+  # resource blocks are assigned wholesale from `type: complex` variables whose
+  # defaults reproduce the inline config (Lakebase ON), and the `nolakebase` target
+  # overrides those variables with the trimmed values. String ${var...} and
+  # ${resources...} references resolve inside complex-variable values.
+  lakebase_project:
+    type: complex
+    description: |
+      Spliced into resources.postgres_projects. The default is the Lakebase Autoscaling
+      project; the `nolakebase` target overrides it with {} so no Postgres is
+      provisioned and no PG* env is injected (the chat UI then runs in its Ephemeral,
+      no-persistence mode).
+    default:
+      # The project creates its production branch and primary endpoint implicitly, and
+      # the bundle leaves both alone. Compute settings — the autoscaling range and the
+      # scale-to-zero timeout — are fixed on some tiers (Free Edition among them), which
+      # reject every write to them and fail the deploy. Tune them per workspace with
+      # `databricks postgres update-endpoint` or the Lakebase UI.
+      chatbot_lakebase_project:
+        project_id: ${var.lakebase_project_id}
+        display_name: ${var.lakebase_project_id}
+        pg_version: ${var.lakebase_pg_version}
+        history_retention_duration: "604800s"
+        lifecycle:
+          prevent_destroy: false
+
+  app_resources:
+    type: complex
+    description: |
+      Spliced into the app's `resources:` list. The default is today's list including
+      the `database` Postgres entry; the `nolakebase` target overrides it with the same
+      list minus that entry, so the app never receives PG* env.
+    default:
+      # The setup script creates this UC-backed experiment. DAB binds it to the app
+      # and passes its id through the "experiment" value_from reference above.
+      - name: 'experiment'
+        experiment:
+          experiment_id: ${var.experiment_id}
+          permission: 'CAN_MANAGE'
+
+      - name: 'trace-warehouse'
+        sql_warehouse:
+          id: ${var.sql_warehouse_id}
+          permission: 'CAN_USE'
+
+      # MODIFY includes SELECT for tables. Declaring them as app resources also
+      # grants USE_CATALOG and USE_SCHEMA automatically.
+      - name: 'trace-spans-modify'
+        uc_securable:
+          securable_type: TABLE
+          securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_spans"
+          permission: MODIFY
+      - name: 'trace-annotations-modify'
+        uc_securable:
+          securable_type: TABLE
+          securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_annotations"
+          permission: MODIFY
+      - name: 'trace-logs-modify'
+        uc_securable:
+          securable_type: TABLE
+          securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_logs"
+          permission: MODIFY
+      - name: 'trace-metrics-modify'
+        uc_securable:
+          securable_type: TABLE
+          securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_metrics"
+          permission: MODIFY
+
+      # Persistent agent memory. As the app's first Postgres resource this makes
+      # Databricks inject PGHOST/PGUSER/PGDATABASE/PGPORT/PGSSLMODE into the app.
+      - name: 'database'
+        postgres:
+          branch: "${resources.postgres_projects.chatbot_lakebase_project.name}/branches/production"
+          database: "${resources.postgres_projects.chatbot_lakebase_project.name}/branches/production/databases/databricks-postgres"
+          permission: CAN_CONNECT_AND_CREATE
+
 resources:
-  # The project creates its production branch and primary endpoint implicitly, and
-  # the bundle leaves both alone. Compute settings — the autoscaling range and the
-  # scale-to-zero timeout — are fixed on some tiers (Free Edition among them), which
-  # reject every write to them and fail the deploy. Tune them per workspace with
-  # `databricks postgres update-endpoint` or the Lakebase UI.
-  postgres_projects:
-    chatbot_lakebase_project:
-      project_id: ${var.lakebase_project_id}
-      display_name: ${var.lakebase_project_id}
-      pg_version: ${var.lakebase_pg_version}
-      history_retention_duration: "604800s"
-      lifecycle:
-        prevent_destroy: false
+  # Both blocks below are spliced from complex variables — see the `lakebase_project`
+  # and `app_resources` variable definitions above. Their defaults reproduce the
+  # previously inline configuration, so every target other than `nolakebase` deploys
+  # exactly what it did before.
+  postgres_projects: ${var.lakebase_project}
 
   apps:
     databricks_agent_chat_app:
@@ -148,50 +226,16 @@ resources:
             value: ${var.ai_search_indexes}
           - name: AGENT_MODEL
             value: ${var.agent_model}
+          # Master web-search switch read by agent_server/web_search.py. false
+          # resolves the backend to "off" before WEB_SEARCH_BACKEND is consulted,
+          # so no hosted search is sent and system.ai.web_search is never attached.
+          - name: WEB_SEARCH_ENABLED
+            value: ${var.web_search}
 
-      resources:
-        # The setup script creates this UC-backed experiment. DAB binds it to the app
-        # and passes its id through the "experiment" value_from reference above.
-        - name: 'experiment'
-          experiment:
-            experiment_id: ${var.experiment_id}
-            permission: 'CAN_MANAGE'
-
-        - name: 'trace-warehouse'
-          sql_warehouse:
-            id: ${var.sql_warehouse_id}
-            permission: 'CAN_USE'
-
-        # MODIFY includes SELECT for tables. Declaring them as app resources also
-        # grants USE_CATALOG and USE_SCHEMA automatically.
-        - name: 'trace-spans-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_spans"
-            permission: MODIFY
-        - name: 'trace-annotations-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_annotations"
-            permission: MODIFY
-        - name: 'trace-logs-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_logs"
-            permission: MODIFY
-        - name: 'trace-metrics-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_metrics"
-            permission: MODIFY
-
-        # Persistent agent memory. As the app's first Postgres resource this makes
-        # Databricks inject PGHOST/PGUSER/PGDATABASE/PGPORT/PGSSLMODE into the app.
-        - name: 'database'
-          postgres:
-            branch: "${resources.postgres_projects.chatbot_lakebase_project.name}/branches/production"
-            database: "${resources.postgres_projects.chatbot_lakebase_project.name}/branches/production/databases/databricks-postgres"
-            permission: CAN_CONNECT_AND_CREATE
+      # Spliced from the `app_resources` complex variable. Its default includes the
+      # `database` Postgres entry; the `nolakebase` target trims that entry so the app
+      # deploys without Postgres and the chat UI runs in Ephemeral (no persistence) mode.
+      resources: ${var.app_resources}
 
 targets:
   dev:
@@ -199,6 +243,38 @@ targets:
     default: true
     # workspace:
     #   host: https://...
+
+  # Deploys the app WITHOUT Lakebase and WITHOUT Unity Catalog trace storage:
+  # no Postgres project is provisioned, no PG* env is injected, and the vendored chat
+  # UI auto-detects that absence and runs in its Ephemeral (no chat persistence) mode.
+  # Traces go to the experiment's own MLflow-managed storage: `setup-mlflow-experiment
+  # --target nolakebase` creates the experiment without a UC trace location and writes
+  # EMPTY-STRING overrides for the default-less trace_catalog/trace_schema/
+  # trace_table_prefix/sql_warehouse_id variables, so the deploy still satisfies them.
+  # start_server.py then skips the UC trace location for the empty values. DABs YAML
+  # has no conditionals and a target cannot remove a resource or list item, so this
+  # works by overriding the two complex variables that splice the Lakebase project and
+  # the app's resource list — see their definitions under `variables:`. Targets do not
+  # inherit from each other, so this target repeats the same workspace/mode shape as
+  # its siblings. Chat history here is ephemeral; use `dev`/`prod` when persistence or
+  # UC trace tables matter. Do NOT switch a target that already deployed Lakebase to
+  # this one: a resource vanishing from a target's config makes the next deploy delete
+  # the deployed project (and its chat history) — `nolakebase` is its own target from
+  # the start.
+  nolakebase:
+    mode: development
+    # workspace:
+    #   host: https://...
+    variables:
+      lakebase_project: {}
+      # Only the experiment — no trace SQL warehouse, no trace-table grants, no
+      # Postgres. The app env still injects TRACE_*=${var.trace_*}, which resolve to
+      # the empty strings the setup script wrote, so no UC trace location is used.
+      app_resources:
+        - name: 'experiment'
+          experiment:
+            experiment_id: ${var.experiment_id}
+            permission: 'CAN_MANAGE'
 
   test:
     mode: development

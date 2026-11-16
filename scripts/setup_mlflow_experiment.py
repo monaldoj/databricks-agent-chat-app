@@ -29,6 +29,11 @@ HOST_MARKER = ".workspace-host"
 APP_KEY = "responses_agent_chat_app"
 PROJECT_KEY = "chatbot_lakebase_project"
 
+# The bundle target that deploys without Lakebase (see the `nolakebase` target in
+# databricks.yml). For it the script skips every Lakebase step: no project is
+# resolved, pinned, bound, or pruned, and no lakebase_project_id is written.
+NOLAKEBASE_TARGET = "nolakebase"
+
 # The bundle used to declare the project's branch and endpoint. State written then
 # still names them, and a deploy deletes state whose node the config dropped, taking
 # the live branch — and the chat history on it — with it.
@@ -93,15 +98,24 @@ def ensure_schema(workspace: WorkspaceClient, catalog: str, schema: str) -> None
 
 def configure_experiment(
     experiment_name: str,
-    catalog: str,
-    schema: str,
-    prefix: str,
+    catalog: str = "",
+    schema: str = "",
+    prefix: str = "",
 ) -> str:
-    location = UnityCatalog(
-        catalog_name=catalog,
-        schema_name=schema,
-        table_prefix=prefix,
-    )
+    """Create or reuse the experiment, with UC trace tables when a location is given.
+
+    The experiment itself needs only the Databricks tracking URI; the Unity Catalog
+    location is what makes MLflow provision the four OTEL trace tables. Omitting it
+    (empty catalog/schema/prefix) leaves traces in the experiment's own MLflow-managed
+    storage — the `nolakebase` target does exactly that.
+    """
+    location = None
+    if catalog and schema and prefix:
+        location = UnityCatalog(
+            catalog_name=catalog,
+            schema_name=schema,
+            table_prefix=prefix,
+        )
     experiment = mlflow.set_experiment(
         experiment_name=experiment_name,
         trace_location=location,
@@ -436,8 +450,16 @@ def main() -> None:
         description="Set up a UC-backed MLflow experiment for this bundle."
     )
     parser.add_argument("--experiment-name", required=True)
-    parser.add_argument("--catalog", required=True)
-    parser.add_argument("--schema", required=True)
+    parser.add_argument(
+        "--catalog",
+        default="",
+        help="UC catalog for the trace tables; required unless --target nolakebase.",
+    )
+    parser.add_argument(
+        "--schema",
+        default="",
+        help="UC schema for the trace tables; required unless --target nolakebase.",
+    )
     parser.add_argument(
         "--profile",
         default="DEFAULT",
@@ -468,6 +490,9 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    no_lakebase = args.target == NOLAKEBASE_TARGET
+    if not no_lakebase and (not args.catalog or not args.schema):
+        parser.error("--catalog and --schema are required unless --target nolakebase")
 
     try:
         prefix = table_prefix(args.experiment_name)
@@ -476,25 +501,39 @@ def main() -> None:
 
         workspace = WorkspaceClient(profile=args.profile)
         align_bundle_state(workspace, args.target, workspace.config.host)
-        warehouse_id = resolve_warehouse_id(
-            workspace,
-            args.sql_warehouse_id or None,
-            read_bundle_overrides(args.target).get("sql_warehouse_id", ""),
-        )
-        os.environ["MLFLOW_TRACING_SQL_WAREHOUSE_ID"] = warehouse_id
-        mlflow.set_tracking_uri("databricks")
 
-        ensure_schema(workspace, args.catalog, args.schema)
-        experiment_id = configure_experiment(
-            args.experiment_name,
-            args.catalog,
-            args.schema,
-            prefix,
-        )
-        trace_location = f"{args.catalog}.{args.schema}.{prefix}"
+        if no_lakebase:
+            # The experiment needs no UC catalog/schema or SQL warehouse — those only
+            # back the Unity Catalog trace tables, which nolakebase does not create.
+            # No trace_location here means traces land in the experiment's own
+            # MLflow-managed storage.
+            warehouse_id = ""
+            trace_location = ""
+            mlflow.set_tracking_uri("databricks")
+            experiment_id = configure_experiment(args.experiment_name)
+        else:
+            warehouse_id = resolve_warehouse_id(
+                workspace,
+                args.sql_warehouse_id or None,
+                read_bundle_overrides(args.target).get("sql_warehouse_id", ""),
+            )
+            os.environ["MLFLOW_TRACING_SQL_WAREHOUSE_ID"] = warehouse_id
+            mlflow.set_tracking_uri("databricks")
+
+            ensure_schema(workspace, args.catalog, args.schema)
+            experiment_id = configure_experiment(
+                args.experiment_name,
+                args.catalog,
+                args.schema,
+                prefix,
+            )
+            trace_location = f"{args.catalog}.{args.schema}.{prefix}"
 
         app_name = args.app_name or f"agent-web-search-genie-{args.target}"
-        project_id = resolve_lakebase_project(workspace, args.target, app_name)
+        if no_lakebase:
+            project_id = ""
+        else:
+            project_id = resolve_lakebase_project(workspace, args.target, app_name)
 
         pinned = read_bundle_overrides(args.target)
         genie_space_ids = args.genie_space_ids or pinned.get("genie_space_ids", "")
@@ -502,40 +541,60 @@ def main() -> None:
         overrides = {
             "app_name": app_name,
             "experiment_id": experiment_id,
-            "trace_catalog": args.catalog,
-            "trace_schema": args.schema,
-            "trace_table_prefix": prefix,
+            # nolakebase writes empty strings so the default-less trace variables are
+            # still satisfied at deploy time; the app then traces to the experiment's
+            # own MLflow-managed storage (see start_server.py).
+            "trace_catalog": "" if no_lakebase else args.catalog,
+            "trace_schema": "" if no_lakebase else args.schema,
+            "trace_table_prefix": "" if no_lakebase else prefix,
             "sql_warehouse_id": warehouse_id,
-            "lakebase_project_id": project_id,
         }
+        if not no_lakebase:
+            overrides["lakebase_project_id"] = project_id
         if genie_space_ids:
             overrides["genie_space_ids"] = genie_space_ids
         if agent_model:
             overrides["agent_model"] = agent_model
         override_path = write_bundle_overrides(args.target, overrides)
-        prune_retired_state(args.target, args.profile)
+        if not no_lakebase:
+            prune_retired_state(args.target, args.profile)
         reconcile_app_binding(workspace, args.target, args.profile, app_name)
-        reconcile_lakebase_binding(
-            args.target,
-            args.profile,
-            project_id,
-            project_is_live(workspace, project_id),
-        )
+        if not no_lakebase:
+            reconcile_lakebase_binding(
+                args.target,
+                args.profile,
+                project_id,
+                project_is_live(workspace, project_id),
+            )
         local_values = {
             "DATABRICKS_CONFIG_PROFILE": args.profile,
             "MLFLOW_EXPERIMENT_ID": experiment_id,
-            "MLFLOW_TRACE_LOCATION": trace_location,
-            "TRACE_CATALOG": args.catalog,
-            "TRACE_SCHEMA": args.schema,
-            "TRACE_TABLE_PREFIX": prefix,
-            "MLFLOW_TRACING_SQL_WAREHOUSE_ID": warehouse_id,
-            "LAKEBASE_PROJECT_ID": project_id,
         }
+        # nolakebase omits every trace variable from .env (and removes stale lines a
+        # previous run for another target may have left), so local runs trace to the
+        # experiment's MLflow-managed storage like the deployed app does.
+        drop = ("MLFLOW_TRACING_DESTINATION",)
+        if not no_lakebase:
+            local_values["MLFLOW_TRACE_LOCATION"] = trace_location
+            local_values["TRACE_CATALOG"] = args.catalog
+            local_values["TRACE_SCHEMA"] = args.schema
+            local_values["TRACE_TABLE_PREFIX"] = prefix
+            local_values["MLFLOW_TRACING_SQL_WAREHOUSE_ID"] = warehouse_id
+        else:
+            drop += (
+                "MLFLOW_TRACE_LOCATION",
+                "TRACE_CATALOG",
+                "TRACE_SCHEMA",
+                "TRACE_TABLE_PREFIX",
+                "MLFLOW_TRACING_SQL_WAREHOUSE_ID",
+            )
+        if not no_lakebase:
+            local_values["LAKEBASE_PROJECT_ID"] = project_id
         if genie_space_ids:
             local_values["GENIE_SPACE_IDS"] = genie_space_ids
         if agent_model:
             local_values["AGENT_MODEL"] = agent_model
-        update_env_file(local_values, drop=("MLFLOW_TRACING_DESTINATION",))
+        update_env_file(local_values, drop=drop)
     except Exception as error:
         print(f"Experiment setup failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error
@@ -544,8 +603,17 @@ def main() -> None:
     print(f"App: {app_name}")
     print(f"Agent model: {agent_model or 'default in agent_server/agent.py'}")
     print(f"Experiment: {args.experiment_name} ({experiment_id})")
-    print(f"Trace tables: {trace_location}_otel_*")
-    print(f"Lakebase project: {project_id}")
+    if no_lakebase:
+        print(
+            "Trace storage: experiment default (MLflow-managed; no UC trace tables, "
+            "no --catalog/--schema needed)"
+        )
+    else:
+        print(f"Trace tables: {trace_location}_otel_*")
+    if no_lakebase:
+        print("Lakebase project: none (nolakebase target — ephemeral chat history)")
+    else:
+        print(f"Lakebase project: {project_id}")
     print(f"Bundle overrides: {override_path}")
     print(
         "Next: "

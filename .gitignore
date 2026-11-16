@@ -177,6 +177,7 @@ tsconfig.tsbuildinfo
 mlflow.db
 
 # Claude Code - track source of truth skills and sync script
+.isaac/*
 .claude/*
 !.claude/skills/
 .claude/skills/*
