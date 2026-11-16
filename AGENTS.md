@@ -365,24 +365,32 @@ project requires an explicit one-time `bundle deployment bind`.
 > instance to provision or protect. Prefer Lakebase when direct SQL access to the history
 > matters or Postgres is already in the stack.
 
-### The `nolakebase` target (no chat persistence)
+### The `nolakebase` target (no chat persistence, experiment-default tracing)
 
 `databricks bundle deploy -t nolakebase` provisions the app **without** any
-Lakebase/Postgres: no project is created, no `PG*` env is injected, and the vendored
-chat UI auto-detects the absence of Postgres (`isDatabaseAvailable()` in
-`e2e-chatbot-app-next/packages/db/src/connection-core.ts`) and runs in its **Ephemeral**
-mode — chat history is not persisted. DABs YAML has no conditionals and a target cannot
-remove a resource or list item, so this works by overriding the two `type: complex`
-variables (`lakebase_project`, `app_resources`) that splice the Lakebase project and the
-app's resource list; every other target keeps Lakebase via their defaults. Run
-`uv run setup-mlflow-experiment ... --target nolakebase` for it: the script then skips
-all Lakebase work (no project is resolved, pinned, bound, or pruned, and no
-`lakebase_project_id` is written) while still setting up the experiment and trace tables.
+Lakebase/Postgres and **without** Unity Catalog trace storage. No project is created,
+no `PG*` env is injected, and the vendored chat UI auto-detects the absence of Postgres
+(`isDatabaseAvailable()` in `e2e-chatbot-app-next/packages/db/src/connection-core.ts`)
+and runs in its **Ephemeral** mode — chat history is not persisted. Traces are stored in
+the **experiment's own MLflow-managed storage**, not a UC location: no UC trace tables,
+no trace-table grants, and no trace SQL warehouse are created. `uv run
+setup-mlflow-experiment ... --target nolakebase` creates the experiment without a UC
+trace location and writes **empty-string** overrides for the default-less
+`trace_catalog`/`trace_schema`/`trace_table_prefix`/`sql_warehouse_id` variables (so the
+deploy still satisfies them); `start_server.py` treats empty trace vars as "no UC
+location" and traces to the experiment default. `--catalog`/`--schema` are **not
+needed at all** in that mode — the experiment itself requires only the tracking URI;
+they are only used for the UC trace tables, which nolakebase skips. DABs YAML has no
+conditionals and a target cannot remove a resource or list item, so the no-Lakebase,
+no-trace-warehouse shape works by overriding the two `type: complex` variables
+(`lakebase_project`, `app_resources`) that splice the Lakebase project and the app's
+resource list; every other target keeps Lakebase and UC trace storage via their
+defaults.
 
 **Do NOT switch an already-Lakebase-deployed target to `nolakebase`** (or vice versa):
 per the Lakebase docs above, a resource vanishing from a target's config makes the next
 deploy delete the deployed project and its chat history. `nolakebase` is its own target
-from the start; use `dev`/`prod` when persistence matters.
+from the start; use `dev`/`prod` when persistence or UC trace tables matter.
 
 ---
 

@@ -231,59 +231,37 @@ targets:
     # workspace:
     #   host: https://...
 
-  # Deploys the app WITHOUT Lakebase: no Postgres project is provisioned, no PG* env
-  # is injected, and the vendored chat UI auto-detects that absence and runs in its
-  # Ephemeral (no chat persistence) mode. DABs YAML has no conditionals and a target
-  # cannot remove a resource or list item, so this works by overriding the two
-  # complex variables that splice the Lakebase project and the app's resource list —
-  # see their definitions under `variables:`. Targets do not inherit from each other,
-  # so this target repeats the same workspace/mode shape as its siblings. Chat history
-  # here is ephemeral; use `dev`/`prod` when persistence matters. Do NOT switch a
-  # target that already deployed Lakebase to this one: a resource vanishing from a
-  # target's config makes the next deploy delete the deployed project (and its chat
-  # history) — `nolakebase` is its own target from the start.
+  # Deploys the app WITHOUT Lakebase and WITHOUT Unity Catalog trace storage:
+  # no Postgres project is provisioned, no PG* env is injected, and the vendored chat
+  # UI auto-detects that absence and runs in its Ephemeral (no chat persistence) mode.
+  # Traces go to the experiment's own MLflow-managed storage: `setup-mlflow-experiment
+  # --target nolakebase` creates the experiment without a UC trace location and writes
+  # EMPTY-STRING overrides for the default-less trace_catalog/trace_schema/
+  # trace_table_prefix/sql_warehouse_id variables, so the deploy still satisfies them.
+  # start_server.py then skips the UC trace location for the empty values. DABs YAML
+  # has no conditionals and a target cannot remove a resource or list item, so this
+  # works by overriding the two complex variables that splice the Lakebase project and
+  # the app's resource list — see their definitions under `variables:`. Targets do not
+  # inherit from each other, so this target repeats the same workspace/mode shape as
+  # its siblings. Chat history here is ephemeral; use `dev`/`prod` when persistence or
+  # UC trace tables matter. Do NOT switch a target that already deployed Lakebase to
+  # this one: a resource vanishing from a target's config makes the next deploy delete
+  # the deployed project (and its chat history) — `nolakebase` is its own target from
+  # the start.
   nolakebase:
     mode: development
     # workspace:
     #   host: https://...
     variables:
       lakebase_project: {}
+      # Only the experiment — no trace SQL warehouse, no trace-table grants, no
+      # Postgres. The app env still injects TRACE_*=${var.trace_*}, which resolve to
+      # the empty strings the setup script wrote, so no UC trace location is used.
       app_resources:
-        # Same list as the `app_resources` default, minus the `database` Postgres
-        # entry. The setup script creates this UC-backed experiment. DAB binds it to
-        # the app and passes its id through the "experiment" value_from reference.
         - name: 'experiment'
           experiment:
             experiment_id: ${var.experiment_id}
             permission: 'CAN_MANAGE'
-
-        - name: 'trace-warehouse'
-          sql_warehouse:
-            id: ${var.sql_warehouse_id}
-            permission: 'CAN_USE'
-
-        # MODIFY includes SELECT for tables. Declaring them as app resources also
-        # grants USE_CATALOG and USE_SCHEMA automatically.
-        - name: 'trace-spans-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_spans"
-            permission: MODIFY
-        - name: 'trace-annotations-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_annotations"
-            permission: MODIFY
-        - name: 'trace-logs-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_logs"
-            permission: MODIFY
-        - name: 'trace-metrics-modify'
-          uc_securable:
-            securable_type: TABLE
-            securable_full_name: "${var.trace_catalog}.${var.trace_schema}.${var.trace_table_prefix}_otel_metrics"
-            permission: MODIFY
 
   test:
     mode: development
