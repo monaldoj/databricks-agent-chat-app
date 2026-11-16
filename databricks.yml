@@ -67,6 +67,14 @@ variables:
       normalized to no indexes while remaining valid for the Apps API.
     default: " "
 
+  web_search:
+    description: |
+      Master switch for the agent's web search. false disables every web-search
+      path — hosted provider search and the system.ai.web_search Unity Gateway MCP
+      server alike — regardless of the agent's WEB_SEARCH_BACKEND setting. The
+      default true keeps today's behavior (probe hosted search, fall back to MCP).
+    default: true
+
   lakebase_project_id:
     description: |
       Lakebase Autoscaling project id that holds persistent agent memory. Unset, the
@@ -218,6 +226,11 @@ resources:
             value: ${var.ai_search_indexes}
           - name: AGENT_MODEL
             value: ${var.agent_model}
+          # Master web-search switch read by agent_server/web_search.py. false
+          # resolves the backend to "off" before WEB_SEARCH_BACKEND is consulted,
+          # so no hosted search is sent and system.ai.web_search is never attached.
+          - name: WEB_SEARCH_ENABLED
+            value: ${var.web_search}
 
       # Spliced from the `app_resources` complex variable. Its default includes the
       # `database` Postgres entry; the `nolakebase` target trims that entry so the app

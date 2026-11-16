@@ -29,6 +29,11 @@ WEB_SEARCH_MCP_NAME = "Databricks Web Search"
 
 # Override the probe: "native" (hosted, if the family has it), "mcp", or "off".
 _BACKEND_ENV = "WEB_SEARCH_BACKEND"
+# Master switch: false/0/no/off (case-insensitive) disables every web-search path,
+# hosted and MCP alike, regardless of WEB_SEARCH_BACKEND. Anything else — including
+# unset — keeps search enabled.
+_ENABLED_ENV = "WEB_SEARCH_ENABLED"
+_DISABLED_VALUES = frozenset({"false", "0", "no", "off"})
 _PROBE_TIMEOUT_SECONDS = 20.0
 _NATIVE_MODES = frozenset({"openai", "google"})
 _HTTP_STATUS_RE = re.compile(r"error code:\s*(\d+)", re.I)
@@ -130,6 +135,17 @@ def backend_override() -> Literal["native", "mcp", "off"] | None:
     return None
 
 
+def web_search_enabled() -> bool:
+    """False only when WEB_SEARCH_ENABLED explicitly disables search.
+
+    This is a hard off-switch that wins over WEB_SEARCH_BACKEND: when it is
+    false, no hosted search is probed or sent and the system.ai.web_search MCP
+    server is never attached. Unset (the deployment default) and any other
+    value keep search enabled.
+    """
+    return os.getenv(_ENABLED_ENV, "").strip().lower() not in _DISABLED_VALUES
+
+
 def mode_from_preference(
     profile: ModelProfile,
     *,
@@ -219,7 +235,14 @@ async def resolved_web_search_mode(
 async def detect_web_search_mode(
     model: str, profile: ModelProfile, client: Any
 ) -> WebSearchMode:
-    """Probe once (unless overridden) and map the result onto a mode."""
+    """Probe once (unless overridden) and map the result onto a mode.
+
+    ``WEB_SEARCH_ENABLED=false`` short-circuits everything to ``off`` before
+    ``WEB_SEARCH_BACKEND`` is consulted, so a deployment can disable search
+    entirely even where the backend override would force native or MCP.
+    """
+    if not web_search_enabled():
+        return "off"
     backend = backend_override()
     if backend == "off":
         return "off"

@@ -183,11 +183,13 @@ deploys the app and Lakebase Autoscaling project:
 | `MLFLOW_TRACING_SQL_WAREHOUSE_ID` | Warehouse selected by experiment setup for creating and querying UC trace tables. |
 | `TRACE_CATALOG` / `TRACE_SCHEMA` / `TRACE_TABLE_PREFIX` | Catalog, schema, and table prefix of the experiment's OTEL tables. DAB injects them from `var.trace_*`; `start_server.py` passes them to `mlflow.set_experiment(..., trace_location=UnityCatalog(...))`. Do not use `MLFLOW_TRACING_DESTINATION` — it cannot carry a table prefix. |
 | `MLFLOW_TRACE_LOCATION` | `catalog.schema.table_prefix` written for local development; fallback if the split `TRACE_*` vars are unset. |
-| `WEB_SEARCH_BACKEND` | Optional. `native` forces hosted search, `mcp` forces `system.ai.web_search`, `off` disables search. Unset, the process probes the gateway once and falls back to MCP when hosted search is rejected. |
+| `WEB_SEARCH_ENABLED` | Optional. `false` disables all agent web search — hosted provider search and the `system.ai.web_search` MCP server alike — overriding `WEB_SEARCH_BACKEND`. Unset or `true` keeps the default behavior. Written from the `web_search` bundle variable. |
+| `WEB_SEARCH_BACKEND` | Optional. `native` forces hosted search, `mcp` forces `system.ai.web_search`, `off` disables search. Unset, the process probes the gateway once and falls back to MCP when hosted search is rejected. Ignored when `WEB_SEARCH_ENABLED=false`. |
 | `BUNDLE_VAR_app_name` | Overrides the app name pinned by setup (`--app-name`, default `agent-web-search-genie-<target>`) for one deploy. |
 | `BUNDLE_VAR_agent_model` | Overrides the model pinned by setup (`--agent-model`) for one deploy. |
 | `BUNDLE_VAR_genie_space_ids` | Optional comma-separated Genie ids for the deployed app. Pin them in `variable-overrides.json` to keep them across deploys. |
 | `BUNDLE_VAR_ai_search_indexes` | Optional comma-separated `catalog.schema.index` AI Search indexes for the deployed app. Pin them in `variable-overrides.json` to keep them across deploys. |
+| `BUNDLE_VAR_web_search` | Overrides the `web_search` switch for one deploy, e.g. `BUNDLE_VAR_web_search=false databricks bundle deploy`. Pin it in `variable-overrides.json` to keep it across deploys. `false` sets `WEB_SEARCH_ENABLED=false` in the app. |
 | `BUNDLE_VAR_lakebase_project_id` | Overrides the Lakebase project pinned by setup for one deploy. Unset and unpinned, the deploy uses `<app-name>-lakebase` and creates it if missing. |
 
 The setup script creates the four UC OTEL trace tables. DAB declares each table
@@ -251,7 +253,10 @@ especially, when cross-region processing is disabled — falls back to the
 A live turn that is refused for the same reason retries with MCP and pins that
 fallback so later questions never send `google_search` / hosted `web_search` again.
 Claude and open-weight models have no hosted search, so they take that MCP path
-directly. Set `WEB_SEARCH_BACKEND=native|mcp|off` to skip the probe. The app
+directly. Set `WEB_SEARCH_BACKEND=native|mcp|off` to skip the probe. `web_search=false` (the
+app env then carries `WEB_SEARCH_ENABLED=false`) is a hard off-switch that overrides
+`WEB_SEARCH_BACKEND`: no hosted search is probed or sent and the
+`system.ai.web_search` MCP server is never attached. The app
 forwards the `ai-gateway` user API scope so the signed-in user can invoke the
 service. After adding that scope, users must re-consent (clear the app's cookies);
 a token issued before the scope change cannot call Unity Gateway, and
