@@ -30,7 +30,9 @@ function PureMessageActions({
   initialFeedback?: Feedback;
 }) {
   // All hooks MUST be called before any early returns
-  const { feedbackEnabled } = useAppConfig();
+  const { config, feedbackEnabled } = useAppConfig();
+  const canSubmitFeedback =
+    config?.features.chatHistory === true && feedbackEnabled;
   const [_, copyToClipboard] = useCopyToClipboard();
   const [feedback, setFeedback] = useState<'thumbs_up' | 'thumbs_down' | null>(
     initialFeedback?.feedbackType || null,
@@ -62,7 +64,9 @@ function PureMessageActions({
 
   const handleFeedback = useCallback(
     async (feedbackType: 'thumbs_up' | 'thumbs_down') => {
-      if (isSubmittingRef.current) return;
+      if (!canSubmitFeedback || !feedbackSupported || isSubmittingRef.current) {
+        return;
+      }
       isSubmittingRef.current = true;
 
       try {
@@ -89,7 +93,7 @@ function PureMessageActions({
         isSubmittingRef.current = false;
       }
     },
-    [message.id],
+    [canSubmitFeedback, feedbackSupported, message.id],
   );
 
   const handleCopy = useCallback(async () => {
@@ -156,7 +160,7 @@ function PureMessageActions({
           <CopyIcon />
         </Action>
       )}
-      {feedbackEnabled && feedbackSupported && feedbackButtons}
+      {canSubmitFeedback && feedbackSupported && feedbackButtons}
       {errorCount > 0 && onToggleErrors && (
         <Action
           tooltip={showErrors ? 'Hide errors' : 'Show errors'}

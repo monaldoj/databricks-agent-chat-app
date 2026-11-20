@@ -2,6 +2,7 @@ import useSWR from 'swr';
 import type { Chat } from '@chat-template/db';
 import type { ChatMessage, FeedbackMap } from '@chat-template/core';
 import { convertToUIMessages } from '@/lib/utils';
+import { useAppConfig } from '@/contexts/AppConfigContext';
 
 interface ChatData {
   chat: Chat;
@@ -13,7 +14,10 @@ interface ChatData {
  * Fetcher function that loads both chat metadata and messages
  * Returns null if chat is not found or user doesn't have access
  */
-async function fetchChatData(url: string): Promise<ChatData | null> {
+async function fetchChatData([
+  url,
+  chatHistoryEnabled,
+]: [string, boolean]): Promise<ChatData | null> {
   const chatId = url.split('/').pop();
 
   // Fetch chat details
@@ -48,15 +52,17 @@ async function fetchChatData(url: string): Promise<ChatData | null> {
 
   // Fetch feedback for this chat (returned as messageId -> feedback map from MLflow)
   let feedbackMap: FeedbackMap = {};
-  try {
-    const feedbackResponse = await fetch(`/api/feedback/chat/${chatId}`);
+  if (chatHistoryEnabled) {
+    try {
+      const feedbackResponse = await fetch(`/api/feedback/chat/${chatId}`);
 
-    if (feedbackResponse.ok) {
-      feedbackMap = await feedbackResponse.json();
+      if (feedbackResponse.ok) {
+        feedbackMap = await feedbackResponse.json();
+      }
+    } catch (error) {
+      // If feedback fetch fails, just continue without it
+      console.warn('Failed to fetch feedback:', error);
     }
-  } catch (error) {
-    // If feedback fetch fails, just continue without it
-    console.warn('Failed to fetch feedback:', error);
   }
 
   return {
@@ -75,9 +81,12 @@ async function fetchChatData(url: string): Promise<ChatData | null> {
  * @returns Chat data, loading state, and error state
  */
 export function useChatData(chatId: string | undefined, enabled = true) {
+  const { config, error: configError } = useAppConfig();
   const { data, error, isLoading, mutate } = useSWR<ChatData | null>(
-    // Only fetch if chatId exists and enabled is true
-    chatId && enabled ? `/chat/${chatId}` : null,
+    // Wait for config so feedback is never fetched without confirmed persistence.
+    chatId && enabled && (config || configError)
+      ? [`/chat/${chatId}`, config?.features.chatHistory === true]
+      : null,
     fetchChatData,
     {
       // Revalidate when window regains focus
