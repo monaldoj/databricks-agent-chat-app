@@ -3,7 +3,7 @@ import json
 import logging
 from collections import deque
 from time import monotonic
-from typing import Any, AsyncGenerator, AsyncIterator, Optional
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Optional
 from uuid import uuid4
 
 from agents.models.fake_id import FAKE_RESPONSES_ID
@@ -572,17 +572,49 @@ def _replace_placeholder_id(event_data: dict, item_id: str) -> None:
 
 async def process_agent_stream_events(
     async_stream: AsyncIterator[StreamEvent],
+    tool_annotations: Callable[[str, Any], list[dict]] | None = None,
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
+    """Agent stream events in the Responses shape the chat client consumes.
+
+    ``tool_annotations``, when given, maps a tool's name and output to the
+    ``url_citation`` annotations to emit for it — the same
+    ``response.output_text.annotation.added`` events hosted web search sends,
+    which the UI renders as citation pills and a Sources list. Returning an
+    empty list emits nothing (the case for every tool but AI Search indexes).
+    """
     curr_item_id = str(uuid4())
+    # Raw function_call items name the tool; output items carry only a call id,
+    # so the pairing is remembered as the stream passes by.
+    tool_names: dict[str, str] = {}
     async for event in async_stream:
         if event.type == "raw_response_event":
             event_data = event.data.model_dump()
             if event_data["type"] == "response.output_item.added":
                 curr_item_id = str(uuid4())
+                item = event_data.get("item")
+                if isinstance(item, dict) and item.get("type") == "function_call":
+                    name, call_id = item.get("name"), item.get("call_id")
+                    if isinstance(name, str) and isinstance(call_id, str):
+                        tool_names[call_id] = name
             _replace_placeholder_id(event_data, curr_item_id)
             yield event_data
         elif event.type == "run_item_stream_event" and event.item.type == "tool_call_output_item":
-            yield ResponsesAgentStreamEvent(
+            done = ResponsesAgentStreamEvent(
                 type="response.output_item.done",
                 item=event.item.to_input_item(),
             )
+            yield done
+            if tool_annotations is None:
+                continue
+            tool_name = tool_names.get(done.item.get("call_id") or "")
+            if tool_name is None:
+                continue
+            for annotation_index, annotation in enumerate(
+                tool_annotations(tool_name, done.item.get("output"))
+            ):
+                yield ResponsesAgentStreamEvent(
+                    type="response.output_text.annotation.added",
+                    item_id=done.item.get("id") or curr_item_id,
+                    annotation_index=annotation_index,
+                    annotation=annotation,
+                )

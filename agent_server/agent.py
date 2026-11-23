@@ -4,7 +4,7 @@ import os
 import re
 from contextlib import asynccontextmanager
 from agents.mcp import MCPServer, MCPServerManager
-from typing import AsyncGenerator, List
+from typing import Any, AsyncGenerator, List
 
 import mlflow
 from agents import (
@@ -26,6 +26,11 @@ from mlflow.types.responses import (
     ResponsesAgentStreamEvent,
 )
 
+from agent_server.ai_search_citations import (
+    ai_search_tool_names,
+    attach_citations,
+    citations_from_tool_output,
+)
 from agent_server.date_tools import get_todays_date
 from agent_server.model_profile import ModelProfile, model_family, model_profile
 from agent_server.utils import (
@@ -179,7 +184,11 @@ You have one or more Databricks AI Search (vector search) indexes as tools. Use 
 retrieve relevant passages from the indexed documents or knowledge base whenever a \
 question could be answered by that content. Ground your answer in the passages the index \
 returns and cite them; do not state document contents that the retrieved results do not \
-support. If the index returns nothing relevant, say so rather than inventing an answer."""
+support. When a result row carries a document URL (in a column such as source_url, \
+doc_uri, or url), cite the passage inline as a markdown link to that URL, and put every \
+cited link once at the end of the answer under a Sources heading — never in the middle \
+of the briefing. If the index returns nothing relevant, say so rather than inventing an \
+answer."""
 
 GENIE_AND_AI_SEARCH_INSTRUCTIONS = """\
 When a question needs both structured figures and supporting document context, query \
@@ -340,6 +349,19 @@ def ai_search_index_display_name(index_full_name: str) -> str:
     return f"AI Search Index: {index_full_name}"
 
 
+def ai_search_citation_annotations(tool_name: str, output: Any) -> List[dict]:
+    """``url_citation`` annotations for an AI Search tool's result, [] otherwise.
+
+    Emitted through the same annotation events hosted web search uses, so the
+    chat UI renders both sources' citations the same way. An index's rows only
+    carry a URL when its source table has a column for one; see
+    agent_server/ai_search_citations.py for how that column is chosen.
+    """
+    if tool_name not in ai_search_tool_names(ai_search_indexes()):
+        return []
+    return citations_from_tool_output(output)
+
+
 def init_mcp_servers(web_search: WebSearchMode):
     user_workspace_client = get_mcp_user_workspace_client()
 
@@ -496,7 +518,9 @@ def conversation_items(request: ResponsesAgentRequest) -> List[dict]:
 async def _invoke_with(agent: Agent, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
     messages = conversation_items(request)
     result = await Runner.run(agent, messages)
-    return ResponsesAgentResponse(output=[item.to_input_item() for item in result.new_items])
+    output = [item.to_input_item() for item in result.new_items]
+    attach_citations(output, ai_search_tool_names(ai_search_indexes()))
+    return ResponsesAgentResponse(output=output)
 
 
 async def _stream_with(
@@ -504,7 +528,10 @@ async def _stream_with(
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
     messages = conversation_items(request)
     result = Runner.run_streamed(agent, input=messages)
-    async for event in process_agent_stream_events(result.stream_events()):
+    async for event in process_agent_stream_events(
+        result.stream_events(),
+        tool_annotations=ai_search_citation_annotations,
+    ):
         yield event
 
 
